@@ -1,0 +1,1354 @@
+import type {
+  Address,
+  AuditEvent,
+  Candidate,
+  Dashboard,
+  Discovery,
+  Facility,
+  Installation,
+  ImageArtifact,
+  ImageInput,
+  InstallTemplate,
+  TemplateInput,
+  InstallRequest,
+  InstallationPreview,
+  Preflight,
+  IpPool,
+  Server,
+  ServerInput,
+  ServerStatus,
+  Transport,
+  LocationInput,
+  LocationNode,
+  CredentialInput,
+  CredentialProfile,
+  IpPoolInput,
+  Idc,
+  Building,
+  Room,
+  RackResource,
+  LocationKind,
+} from './contracts';
+import { updateInstallationProgress } from './installation-progress';
+import { checkScript, demoScripts, ipv4Number, ipv4Text, subnetRange } from './configuration-rules';
+
+export type Scenario = 'normal' | 'empty' | 'error';
+class DomainError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    public fields?: Record<string, string>,
+  ) {
+    super(message);
+  }
+}
+const fail = (
+  status: number,
+  code: string,
+  message: string,
+  fields?: Record<string, string>,
+): never => {
+  throw new DomainError(status, code, message, fields);
+};
+const timestamp = () => new Date().toISOString();
+const required = (value: unknown, key: string, max = 64): string => {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > max)
+    return fail(400, 'VALIDATION_ERROR', '请检查输入字段', { [key]: `必填，最多 ${max} 个字符` });
+  return value.trim();
+};
+const integer = (value: unknown, key: string, min: number, max: number): number => {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max)
+    return fail(400, 'VALIDATION_ERROR', '请检查数值范围', {
+      [key]: `请输入 ${min}–${max} 的整数`,
+    });
+  return value;
+};
+const choice = <T extends string>(value: unknown, key: string, options: readonly T[]): T => {
+  if (!options.includes(value as T))
+    return fail(400, 'VALIDATION_ERROR', '不支持的选项', { [key]: `仅支持 ${options.join(', ')}` });
+  return value as T;
+};
+
+export function createMockService(options: { latency?: number; taskDuration?: number } = {}) {
+  const latency = options.latency ?? 180;
+  const taskDuration = options.taskDuration ?? 3600;
+  let scenario: Scenario = 'normal';
+  let sequence = 100;
+  let facilities: Facility[] = [];
+  let pools: IpPool[] = [];
+  let servers: Server[] = [];
+  let addresses: Address[] = [];
+  let discoveries: Discovery[] = [];
+  let installations: Installation[] = [];
+  let images: ImageArtifact[] = [];
+  let templates: InstallTemplate[] = [];
+  let idcs: Idc[] = [];
+  let buildings: Building[] = [];
+  let rooms: Room[] = [];
+  let rackRecords: RackResource[] = [];
+  let credentials: CredentialProfile[] = [];
+  let events: AuditEvent[] = [];
+  const id = (prefix: string) => `${prefix}-${++sequence}`;
+  const audit = (
+    action: string,
+    target: string,
+    requestId: string,
+    result: 'success' | 'failure' = 'success',
+  ) =>
+    events.unshift({
+      id: id('evt'),
+      action,
+      target,
+      result,
+      actor: '演示操作员',
+      createdAt: timestamp(),
+      requestId,
+    });
+  function reset(next: Scenario = 'normal') {
+    scenario = next;
+    sequence = 100;
+    discoveries = [];
+    installations = [];
+    images =
+      next === 'empty'
+        ? []
+        : [
+            {
+              id: 'ubuntu-24.04',
+              name: 'Ubuntu 24.04 LTS',
+              family: 'ubuntu',
+              version: '24.04',
+              architecture: 'x86_64',
+              sourceLabel: 'Ubuntu 安装介质（演示元数据）',
+              checksum: 'a'.repeat(64),
+              status: 'ready',
+              createdAt: '2026-11-01T08:00:00.000Z',
+            },
+            {
+              id: 'rocky-9',
+              name: 'Rocky Linux 9',
+              family: 'rocky',
+              version: '9',
+              architecture: 'x86_64',
+              sourceLabel: 'Rocky 安装介质（演示元数据）',
+              checksum: 'b'.repeat(64),
+              status: 'ready',
+              createdAt: '2026-11-01T08:00:00.000Z',
+            },
+            {
+              id: 'ubuntu-draft',
+              name: 'Ubuntu 验证草稿',
+              family: 'ubuntu',
+              version: '24.04-test',
+              architecture: 'x86_64',
+              sourceLabel: '待验证介质（演示元数据）',
+              checksum: 'c'.repeat(64),
+              status: 'draft',
+              createdAt: '2026-11-01T08:00:00.000Z',
+            },
+          ];
+    templates =
+      next === 'empty'
+        ? []
+        : images.map((image) => ({
+            id: `tpl-${image.id}`,
+            name: `${image.name} 标准配置`,
+            version: '1',
+            imageId: image.id,
+            bootMode: 'uefi',
+            rootDisk: 'sda',
+            partitionLayout: 'lvm',
+            timezone: 'UTC',
+            scriptType: 'shell',
+            content: demoScripts.shell,
+            createdAt: image.createdAt,
+          }));
+    events = [];
+    facilities =
+      next === 'empty'
+        ? []
+        : [
+            {
+              id: 'dc-east',
+              name: '东区演示中心',
+              city: '杭州',
+              racks: [
+                {
+                  id: 'rack-a01',
+                  name: 'A01',
+                  room: '一号机房',
+                  dataCenterId: 'dc-east',
+                  capacity: 42,
+                },
+                {
+                  id: 'rack-a02',
+                  name: 'A02',
+                  room: '一号机房',
+                  dataCenterId: 'dc-east',
+                  capacity: 42,
+                },
+              ],
+            },
+            {
+              id: 'dc-west',
+              name: '西区演示中心',
+              city: '成都',
+              racks: [
+                {
+                  id: 'rack-b01',
+                  name: 'B01',
+                  room: '二号机房',
+                  dataCenterId: 'dc-west',
+                  capacity: 42,
+                },
+              ],
+            },
+          ];
+    pools =
+      next === 'empty'
+        ? []
+        : [
+            {
+              id: 'pool-east',
+              name: '东区业务网络',
+              cidr: '192.0.2.0/24',
+              gateway: '192.0.2.1',
+              dataCenterId: 'dc-east',
+              purpose: 'in-band',
+              addressCount: 0,
+              allocatedCount: 0,
+            },
+            {
+              id: 'pool-west',
+              name: '西区业务网络',
+              cidr: '198.51.100.0/24',
+              gateway: '198.51.100.1',
+              dataCenterId: 'dc-west',
+              purpose: 'in-band',
+              addressCount: 0,
+              allocatedCount: 0,
+            },
+          ];
+    servers =
+      next === 'empty'
+        ? []
+        : Array.from({ length: 12 }, (_, n) => ({
+            id: `srv-${n + 1}`,
+            assetTag: `OAK-${String(n + 1).padStart(4, '0')}`,
+            name: `oak-${n < 8 ? 'east' : 'west'}-${String(n + 1).padStart(2, '0')}`,
+            serial: `DEMO-SN-${String(n + 1).padStart(5, '0')}`,
+            model: ['Dell PowerEdge R750', 'Lenovo ThinkSystem SR650', 'HPE ProLiant DL380'][n % 3],
+            rackId: n < 4 ? 'rack-a01' : n < 8 ? 'rack-a02' : 'rack-b01',
+            unit: (n % 4) * 3 + 1,
+            height: 2,
+            cpu: '2 × 24 核（模拟）',
+            memoryGb: n % 2 ? 256 : 128,
+            status: n === 3 || n === 9 ? 'maintenance' : 'ready',
+            power: n === 3 || n === 9 ? 'off' : 'on',
+            os: n % 3 ? 'Ubuntu 24.04 LTS' : null,
+            cpuUsage: 12 + n * 4,
+            memoryUsage: 30 + n * 3,
+            health: n === 5 ? 'warning' : 'healthy',
+            createdAt: '2026-11-01T08:00:00.000Z',
+          }));
+    addresses = pools.flatMap((pool, p) =>
+      Array.from({ length: 16 }, (_, i) => ({
+        id: `ip-${p}-${i}`,
+        poolId: pool.id,
+        ip: `${p ? '198.51.100' : '192.0.2'}.${10 + i}`,
+        serverId: i < (p ? 3 : 6) ? `srv-${p ? i + 9 : i + 1}` : null,
+      })),
+    );
+    setLocationNodes(
+      facilities.flatMap((dc) => [
+        { id: dc.id, kind: 'idc' as const, parentId: null, name: dc.name, city: dc.city },
+        { id: `building-${dc.id}`, kind: 'building' as const, parentId: dc.id, name: '演示楼栋' },
+        {
+          id: `room-${dc.id}`,
+          kind: 'room' as const,
+          parentId: `building-${dc.id}`,
+          name: dc.racks[0]?.room ?? '演示机房',
+        },
+        ...dc.racks.map((rack) => ({
+          id: rack.id,
+          kind: 'rack' as const,
+          parentId: `room-${dc.id}`,
+          name: rack.name,
+          capacity: rack.capacity,
+        })),
+      ]),
+    );
+    credentials =
+      next === 'empty'
+        ? []
+        : [
+            {
+              id: 'auth-in-band',
+              name: '带内虚构认证',
+              method: 'in-band',
+              protocol: 'ssh',
+              usernameAlias: 'demo-inband',
+              secretMask: '••••••••',
+            },
+            {
+              id: 'auth-out-of-band',
+              name: '带外虚构认证',
+              method: 'out-of-band',
+              protocol: 'ipmi',
+              usernameAlias: 'demo-oob',
+              secretMask: '••••••••',
+            },
+          ];
+    syncFacilities();
+    if (next !== 'empty') audit('演示环境初始化', '合成资源数据', 'seed');
+  }
+  function getLocation(locationId: string) {
+    return (
+      locationNodes().find((entry) => entry.id === locationId) ??
+      fail(404, 'NOT_FOUND', '位置不存在')
+    );
+  }
+  // Four canonical in-memory collections mirror the four proposed database tables.
+  // Legacy tree/facilities views are derived, never a fifth canonical collection.
+  function locationNodes(): LocationNode[] {
+    return [
+      ...idcs.map((entry) => ({ ...entry, kind: 'idc' as const, parentId: null })),
+      ...buildings.map(({ id, name, idcId }) => ({
+        id,
+        name,
+        kind: 'building' as const,
+        parentId: idcId,
+      })),
+      ...rooms.map(({ id, name, buildingId }) => ({
+        id,
+        name,
+        kind: 'room' as const,
+        parentId: buildingId,
+      })),
+      ...rackRecords.map(({ id, name, roomId, capacity }) => ({
+        id,
+        name,
+        capacity,
+        kind: 'rack' as const,
+        parentId: roomId,
+      })),
+    ];
+  }
+  function setLocationNodes(nodes: LocationNode[]) {
+    idcs = nodes
+      .filter((node) => node.kind === 'idc')
+      .map(({ id, name, city }) => ({ id, name, city: city! }));
+    buildings = nodes
+      .filter((node) => node.kind === 'building')
+      .map(({ id, name, parentId }) => ({ id, name, idcId: parentId! }));
+    rooms = nodes
+      .filter((node) => node.kind === 'room')
+      .map(({ id, name, parentId }) => ({ id, name, buildingId: parentId! }));
+    rackRecords = nodes
+      .filter((node) => node.kind === 'rack')
+      .map(({ id, name, parentId, capacity }) => ({
+        id,
+        name,
+        roomId: parentId!,
+        capacity: capacity!,
+      }));
+  }
+  const parentFields = {
+    idc: null,
+    building: 'idcId',
+    room: 'buildingId',
+    rack: 'roomId',
+  } as const;
+  const resourceKinds: Record<string, LocationKind> = {
+    idcs: 'idc',
+    buildings: 'building',
+    rooms: 'room',
+    racks: 'rack',
+  };
+  function resourceRows(kind: LocationKind) {
+    switch (kind) {
+      case 'idc':
+        return idcs;
+      case 'building':
+        return buildings;
+      case 'room':
+        return rooms;
+      case 'rack':
+        return rackRecords;
+    }
+  }
+  function saveLocation(input: LocationInput, previous?: LocationNode) {
+    const result = { ...input, id: previous?.id ?? id(input.kind) };
+    const nodes = locationNodes();
+    setLocationNodes(
+      previous
+        ? nodes.map((entry) => (entry.id === previous.id ? result : entry))
+        : [...nodes, result],
+    );
+    syncFacilities();
+    return result;
+  }
+  function deleteLocation(entry: LocationNode) {
+    if (
+      locationNodes().some((item) => item.parentId === entry.id) ||
+      servers.some((server) => server.rackId === entry.id) ||
+      pools.some((pool) => pool.dataCenterId === entry.id)
+    )
+      fail(409, 'RESOURCE_IN_USE', '资源仍有子级、设备或网段引用');
+    setLocationNodes(locationNodes().filter((item) => item.id !== entry.id));
+    syncFacilities();
+  }
+  function syncFacilities() {
+    const locations = locationNodes();
+    facilities = locations
+      .filter((entry) => entry.kind === 'idc')
+      .map((dc) => ({
+        id: dc.id,
+        name: dc.name,
+        city: dc.city ?? '',
+        racks: locations
+          .filter((entry) => entry.kind === 'rack')
+          .filter((rack) => {
+            const room = locations.find((entry) => entry.id === rack.parentId);
+            const building = locations.find((entry) => entry.id === room?.parentId);
+            return building?.parentId === dc.id;
+          })
+          .map((rack) => ({
+            id: rack.id,
+            name: rack.name,
+            roomId: rack.parentId!,
+            room: getLocation(rack.parentId!).name,
+            dataCenterId: dc.id,
+            capacity: rack.capacity!,
+          })),
+      }));
+  }
+  function validateLocation(body: Record<string, unknown>, previous?: LocationNode): LocationInput {
+    if (previous && Object.keys(body).some((key) => !['name', 'city', 'capacity'].includes(key)))
+      fail(400, 'VALIDATION_ERROR', '位置类型和父级不可修改');
+    const kind =
+      previous?.kind ??
+      choice<LocationInput['kind']>(body.kind, 'kind', ['idc', 'building', 'room', 'rack']);
+    const parentId = previous
+      ? previous.parentId
+      : body.parentId === null
+        ? null
+        : required(body.parentId, 'parentId');
+    const name = required(body.name, 'name');
+    const expected = { building: 'idc', room: 'building', rack: 'room' };
+    if (
+      kind === 'idc'
+        ? parentId !== null
+        : !parentId || getLocation(parentId).kind !== expected[kind]
+    )
+      fail(400, 'LOCATION_PARENT', '父级类型不正确');
+    if (
+      locationNodes().some(
+        (entry) =>
+          entry.id !== previous?.id &&
+          entry.parentId === parentId &&
+          entry.name.toLowerCase() === name.toLowerCase(),
+      )
+    )
+      fail(409, 'LOCATION_CONFLICT', '同父级名称已存在');
+    const result: LocationInput = { kind, parentId, name };
+    if (kind === 'idc')
+      result.city = required(body.city !== undefined ? body.city : previous?.city, 'city');
+    if (kind === 'rack') {
+      result.capacity = integer(
+        body.capacity !== undefined ? body.capacity : previous?.capacity,
+        'capacity',
+        1,
+        42,
+      );
+      if (
+        servers.some(
+          (server) =>
+            server.rackId === previous?.id &&
+            server.status !== 'retired' &&
+            server.unit + server.height - 1 > result.capacity!,
+        )
+      )
+        fail(409, 'RESOURCE_IN_USE', '缩容会挤占现有设备 U 位');
+    }
+    return result;
+  }
+  function validateCredential(body: Record<string, unknown>): CredentialInput {
+    if (
+      Object.keys(body).some(
+        (key) => !['name', 'method', 'protocol', 'usernameAlias'].includes(key),
+      )
+    )
+      fail(400, 'SECRET_FIELD_FORBIDDEN', '只允许虚构配置元数据，不接收密码、令牌或其他字段');
+    const method = choice(body.method, 'method', ['in-band', 'out-of-band']);
+    const protocol = choice(
+      body.protocol,
+      'protocol',
+      method === 'in-band' ? ['ssh'] : ['ipmi', 'redfish'],
+    );
+    const usernameAlias = required(body.usernameAlias, 'usernameAlias', 32);
+    if (!/^demo-[a-zA-Z0-9-]+$/.test(usernameAlias))
+      fail(400, 'VALIDATION_ERROR', '仅允许 demo- 开头的虚构用户名别名');
+    return { name: required(body.name, 'name'), method, protocol, usernameAlias };
+  }
+  function scriptFields(body: Record<string, unknown>) {
+    const scriptType = choice(body.scriptType ?? 'shell', 'scriptType', [
+      'shell',
+      'kickstart',
+      'python',
+    ]);
+    const content =
+      body.content === undefined
+        ? demoScripts[scriptType]
+        : typeof body.content === 'string'
+          ? body.content
+          : fail(400, 'VALIDATION_ERROR', '脚本内容必须为文本');
+    const report = checkScript(scriptType, content);
+    if (!report.valid)
+      fail(400, 'SCRIPT_INVALID', report.issues.join('；'), { content: report.issues.join('；') });
+    return { scriptType, content };
+  }
+  function makeTemplate(body: Record<string, unknown>): InstallTemplate {
+    const template: TemplateInput = {
+      name: required(body.name, 'name'),
+      version: required(body.version, 'version', 32),
+      imageId: required(body.imageId, 'imageId'),
+      bootMode: choice(body.bootMode, 'bootMode', ['uefi', 'bios']),
+      rootDisk: choice(body.rootDisk, 'rootDisk', ['sda', 'nvme0n1']),
+      partitionLayout: choice(body.partitionLayout, 'partitionLayout', ['lvm', 'single']),
+      timezone: choice(body.timezone, 'timezone', ['UTC', 'Asia/Shanghai']),
+    };
+    const script = scriptFields(body);
+    getImage(template.imageId);
+    if (
+      templates.some(
+        (entry) =>
+          entry.name.toLowerCase() === template.name.toLowerCase() &&
+          entry.version.toLowerCase() === template.version.toLowerCase(),
+      )
+    )
+      fail(409, 'TEMPLATE_CONFLICT', '同名同版本模板已存在');
+    const result = { ...template, ...script, id: id('tpl'), createdAt: timestamp() };
+    templates.unshift(result);
+    return result;
+  }
+  const poolView = (pool: IpPool) => ({
+    ...pool,
+    addressCount: addresses.filter((address) => address.poolId === pool.id).length,
+    allocatedCount: addresses.filter((address) => address.poolId === pool.id && address.serverId)
+      .length,
+  });
+  const businessAddress = (serverId: string) =>
+    addresses.find(
+      (entry) =>
+        entry.serverId === serverId &&
+        pools.find((pool) => pool.id === entry.poolId)?.purpose === 'in-band',
+    );
+  const racks = () => facilities.flatMap((f) => f.racks);
+  const getServer = (serverId: string) =>
+    servers.find((s) => s.id === serverId) ?? fail(404, 'NOT_FOUND', '服务器不存在');
+  const getImage = (imageId: string) =>
+    images.find((image) => image.id === imageId) ?? fail(404, 'NOT_FOUND', '镜像不存在');
+  const getTemplate = (templateId: string) =>
+    templates.find((template) => template.id === templateId) ??
+    fail(404, 'NOT_FOUND', '模板不存在');
+  const getInstallation = (taskId: string) =>
+    installations.find((task) => task.id === taskId) ?? fail(404, 'NOT_FOUND', '装机任务不存在');
+  function validateInstallRequest(body: Record<string, unknown>): InstallRequest {
+    const input: InstallRequest = {
+      serverId: required(body.serverId, 'serverId'),
+      imageId: required(body.imageId, 'imageId'),
+      templateId: required(body.templateId, 'templateId'),
+      hostname: required(body.hostname, 'hostname', 63).toLowerCase(),
+      method: choice(body.method, 'method', ['pxe', 'iso']),
+    };
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(input.hostname))
+      fail(400, 'VALIDATION_ERROR', '主机名格式无效', {
+        hostname: '使用 1–63 位字母、数字或连字符，首尾不能是连字符',
+      });
+    if (body.simulateFailure !== undefined && typeof body.simulateFailure !== 'boolean')
+      fail(400, 'VALIDATION_ERROR', 'simulateFailure 必须为布尔值');
+    input.simulateFailure = body.simulateFailure === true;
+    if (body.expectedIp !== undefined)
+      input.expectedIp = required(body.expectedIp, 'expectedIp', 45);
+    return input;
+  }
+  function preview(input: InstallRequest): InstallationPreview {
+    const server = getServer(input.serverId);
+    const image = getImage(input.imageId);
+    const template = getTemplate(input.templateId);
+    const address = businessAddress(server.id);
+    const pool = address && pools.find((entry) => entry.id === address.poolId);
+    const parameters = structuredClone({
+      serverId: server.id,
+      serverName: server.name,
+      serial: server.serial,
+      hostname: input.hostname,
+      method: input.method,
+      image,
+      template,
+      address: address && pool ? { ip: address.ip, gateway: pool.gateway, cidr: pool.cidr } : null,
+    });
+    return {
+      parameters,
+      plan: JSON.stringify(
+        {
+          prototype: true,
+          executable: false,
+          target: { id: server.id, serial: server.serial, hostname: input.hostname },
+          image: {
+            id: image.id,
+            family: image.family,
+            version: image.version,
+            architecture: image.architecture,
+            declaredSha256: image.checksum,
+          },
+          template: {
+            id: template.id,
+            version: template.version,
+            scriptType: template.scriptType,
+            content: template.content,
+          },
+          boot: { method: input.method, mode: template.bootMode },
+          storage: {
+            rootDisk: template.rootDisk,
+            layout: template.partitionLayout,
+            effect: '覆盖目标磁盘（仅模拟，不执行）',
+          },
+          network: parameters.address,
+          timezone: template.timezone,
+        },
+        null,
+        2,
+      ),
+    };
+  }
+  function preflight(input: InstallRequest): Preflight {
+    const result = preview(input);
+    const server = getServer(input.serverId);
+    const check = (
+      key: string,
+      label: string,
+      pass: boolean,
+      message: string,
+    ): Preflight['checks'][number] => ({ key, label, status: pass ? 'pass' : 'fail', message });
+    const checks: Preflight['checks'] = [
+      check(
+        'state',
+        '目标状态',
+        ['ready', 'maintenance'].includes(server.status),
+        ['ready', 'maintenance'].includes(server.status)
+          ? '目标允许创建模拟任务'
+          : '装机中或退役设备不可再次装机',
+      ),
+      check(
+        'ip',
+        '业务 IP',
+        !!result.parameters.address,
+        result.parameters.address
+          ? `已绑定 ${result.parameters.address.ip}`
+          : '请先分配同中心业务 IP',
+      ),
+      check(
+        'image',
+        '镜像记录',
+        result.parameters.image.status === 'ready',
+        result.parameters.image.status === 'ready'
+          ? '元数据标记为就绪；未验证真实介质'
+          : '草稿镜像不可装机',
+      ),
+      check(
+        'template',
+        '模板关联',
+        result.parameters.template.imageId === input.imageId,
+        result.parameters.template.imageId === input.imageId
+          ? '模板与所选镜像匹配'
+          : '模板关联的镜像与当前选择不一致',
+      ),
+      {
+        key: 'hardware',
+        label: '真实环境验证',
+        status: 'warning',
+        message: '未探测磁盘、架构、启动固件或网络服务；未下载镜像或校验真实 SHA-256。均为 Mock。',
+      },
+    ];
+    return {
+      ...result,
+      checkedAt: timestamp(),
+      passed: checks.every((item) => item.status !== 'fail'),
+      checks,
+    };
+  }
+  function createInstallation(
+    input: InstallRequest,
+    requestId: string,
+    retryOf: string | null = null,
+  ): Installation {
+    const report = preflight(input);
+    if (input.expectedIp !== undefined && input.expectedIp !== report.parameters.address?.ip)
+      fail(409, 'SNAPSHOT_CHANGED', '预览后的 IP 已变化，请重新预览并预检');
+    const failed = report.checks.find((item) => item.status === 'fail');
+    if (failed)
+      fail(
+        409,
+        (
+          { ip: 'IP_REQUIRED', image: 'IMAGE_NOT_READY', template: 'TEMPLATE_MISMATCH' } as Record<
+            string,
+            string
+          >
+        )[failed.key] ?? 'STATE_CONFLICT',
+        failed.message,
+      );
+    if (
+      retryOf &&
+      JSON.stringify(report.parameters) !== JSON.stringify(getInstallation(retryOf).parameters)
+    )
+      fail(409, 'SNAPSHOT_CHANGED', '资源参数已改变，请新建任务并重新预览');
+    const task: Installation = {
+      id: id('install'),
+      serverId: input.serverId,
+      image: report.parameters.image.name,
+      method: input.method,
+      simulateFailure: input.simulateFailure === true,
+      status: 'running',
+      progress: 0,
+      createdAt: timestamp(),
+      logs: [],
+      parameters: report.parameters,
+      stages: [],
+      events: [],
+      failureReason: null,
+      retryOf,
+    };
+    updateInstallationProgress(task, taskDuration);
+    getServer(input.serverId).status = 'installing';
+    installations.unshift(task);
+    audit(retryOf ? '重试模拟装机' : '提交模拟装机', task.id, requestId);
+    return task;
+  }
+  function validateServer(body: Record<string, unknown>): ServerInput {
+    const result: ServerInput = {
+      assetTag: required(body.assetTag, 'assetTag', 32),
+      name: required(body.name, 'name'),
+      serial: required(body.serial, 'serial'),
+      model: required(body.model, 'model'),
+      rackId: required(body.rackId, 'rackId'),
+      unit: integer(body.unit, 'unit', 1, 42),
+      height: integer(body.height, 'height', 1, 8),
+      memoryGb: integer(body.memoryGb, 'memoryGb', 1, 8192),
+    };
+    if (!/^[A-Za-z0-9-]+$/.test(result.assetTag))
+      fail(400, 'VALIDATION_ERROR', '资产编号只允许字母、数字和连字符', { assetTag: '格式不正确' });
+    const rack =
+      racks().find((r) => r.id === result.rackId) ??
+      fail(400, 'VALIDATION_ERROR', '机架不存在', { rackId: '请选择现有机架' });
+    if (result.unit + result.height - 1 > rack.capacity)
+      fail(400, 'VALIDATION_ERROR', '设备超出机架容量', { unit: '剩余 U 位不足' });
+    if (servers.some((s) => s.assetTag.toLowerCase() === result.assetTag.toLowerCase()))
+      fail(409, 'ASSET_CONFLICT', '资产编号已存在', { assetTag: '资产编号已存在' });
+    if (servers.some((s) => s.serial.toLowerCase() === result.serial.toLowerCase()))
+      fail(409, 'SERIAL_CONFLICT', '序列号已存在', { serial: '序列号已存在' });
+    if (
+      servers.some(
+        (s) =>
+          s.rackId === rack.id &&
+          s.status !== 'retired' &&
+          result.unit <= s.unit + s.height - 1 &&
+          result.unit + result.height - 1 >= s.unit,
+      )
+    )
+      fail(409, 'RACK_CONFLICT', '目标 U 位已被占用', { unit: '与现有设备重叠' });
+    return result;
+  }
+  function addServer(input: ServerInput): Server {
+    const server: Server = {
+      ...input,
+      id: id('srv'),
+      status: 'ready',
+      power: 'off',
+      os: null,
+      cpu: '待硬件盘点（模拟）',
+      cpuUsage: 0,
+      memoryUsage: 0,
+      health: 'healthy',
+      createdAt: timestamp(),
+    };
+    servers.unshift(server);
+    return server;
+  }
+  function advance(requestId: string) {
+    for (const task of discoveries) {
+      const progress = Math.min(
+        100,
+        Math.floor(((Date.now() - Date.parse(task.createdAt)) / (taskDuration / 2)) * 100),
+      );
+      task.progress = progress;
+      task.status = progress >= 100 ? 'succeeded' : 'running';
+    }
+    for (const task of installations.filter(
+      (t) => t.status === 'running' || t.status === 'pending',
+    )) {
+      updateInstallationProgress(task, taskDuration);
+      if (task.status === 'failed' || task.status === 'succeeded') {
+        const server = getServer(task.serverId);
+        server.status = task.simulateFailure ? 'maintenance' : 'ready';
+        if (!task.simulateFailure) {
+          server.os = task.parameters.image.name;
+          server.power = 'on';
+        }
+        audit(
+          task.simulateFailure ? '模拟装机失败' : '模拟装机完成',
+          server.name,
+          requestId,
+          task.simulateFailure ? 'failure' : 'success',
+        );
+      }
+    }
+  }
+  function paginate<T extends object>(
+    items: T[],
+    params: URLSearchParams,
+    allowedSort: (keyof T & string)[],
+    defaultSort: keyof T & string,
+  ) {
+    const page = Number(params.get('page') ?? 1);
+    const pageSize = Number(params.get('pageSize') ?? 10);
+    integer(page, 'page', 1, 100000);
+    integer(pageSize, 'pageSize', 1, 100);
+    const sort = params.get('sort') ?? defaultSort;
+    if (!allowedSort.includes(sort as keyof T & string))
+      fail(400, 'VALIDATION_ERROR', '不支持的排序字段');
+    const order = choice(params.get('order') ?? 'asc', 'order', ['asc', 'desc']);
+    const sorted = [...items].sort(
+      (a, b) =>
+        String(a[sort as keyof T] ?? '').localeCompare(String(b[sort as keyof T] ?? ''), 'zh-CN', {
+          numeric: true,
+        }) * (order === 'desc' ? -1 : 1),
+    );
+    return {
+      items: sorted.slice((page - 1) * pageSize, page * pageSize),
+      total: sorted.length,
+      page,
+      pageSize,
+    };
+  }
+  const transport: Transport = async (request) => {
+    if (latency)
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, latency);
+        request.signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            reject(new DOMException('Aborted', 'AbortError'));
+          },
+          { once: true },
+        );
+      });
+    if (request.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    const requestId = id('req');
+    try {
+      if (scenario === 'error')
+        fail(500, 'MOCK_UNAVAILABLE', '模拟服务暂不可用，请恢复正常场景后重试');
+      advance(requestId);
+      const url = new URL(request.url);
+      const path = url.pathname.replace(/^\/api\/v1/, '');
+      const method = request.method;
+      const params = url.searchParams;
+      if (!url.pathname.startsWith('/api/v1/')) fail(404, 'NOT_FOUND', '接口不存在');
+      let body: Record<string, unknown> = {};
+      if (method === 'POST' || method === 'PATCH') {
+        try {
+          const parsed: unknown = await request.json();
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+          body = parsed as Record<string, unknown>;
+        } catch {
+          fail(400, 'INVALID_JSON', '请求体必须是 JSON 对象');
+        }
+      }
+      let data: unknown;
+      let status = 200;
+      if (method === 'GET' && path === '/facilities') data = facilities;
+      else if (method === 'GET' && path === '/ip-pools') data = pools.map(poolView);
+      else if (Object.hasOwn(resourceKinds, path.split('/')[1])) {
+        const parts = path.split('/').slice(1);
+        const kind = resourceKinds[parts[0]];
+        if (parts.length > 2) fail(404, 'NOT_FOUND', '接口不存在');
+        const previous = parts[1] ? getLocation(parts[1]) : undefined;
+        if (previous && previous.kind !== kind) fail(404, 'NOT_FOUND', '资源不存在');
+        const parentField = parentFields[kind];
+        if (method === 'GET' && !previous) {
+          const q = (params.get('q') ?? '').toLowerCase();
+          const parent = parentField ? params.get(parentField) : null;
+          const rows = resourceRows(kind).filter(
+            (entry) =>
+              entry.name.toLowerCase().includes(q) &&
+              (!parent ||
+                (parentField === 'idcId' && 'idcId' in entry && entry.idcId === parent) ||
+                (parentField === 'buildingId' &&
+                  'buildingId' in entry &&
+                  entry.buildingId === parent) ||
+                (parentField === 'roomId' && 'roomId' in entry && entry.roomId === parent)),
+          );
+          data = paginate(rows, params, ['name'], 'name');
+        } else if (method === 'GET' && previous) {
+          data = resourceRows(kind).find((entry) => entry.id === previous.id);
+        } else if ((method === 'POST' && !previous) || (method === 'PATCH' && previous)) {
+          const allowed = [
+            'name',
+            ...(kind === 'idc' ? ['city'] : []),
+            ...(kind === 'rack' ? ['capacity'] : []),
+            ...(!previous && parentField ? [parentField] : []),
+          ];
+          if (Object.keys(body).some((key) => !allowed.includes(key)))
+            fail(400, 'VALIDATION_ERROR', '仅允许该资源的可编辑字段，父级不可修改');
+          const input = validateLocation(
+            {
+              ...body,
+              ...(!previous ? { kind, parentId: parentField ? body[parentField] : null } : {}),
+            },
+            previous,
+          );
+          const result = saveLocation(input, previous);
+          data = resourceRows(kind).find((entry) => entry.id === result.id);
+          status = previous ? 200 : 201;
+          audit(previous ? '编辑资源' : '新增资源', result.id, requestId);
+        } else if (method === 'DELETE' && previous) {
+          data = resourceRows(kind).find((entry) => entry.id === previous.id);
+          deleteLocation(previous);
+          audit('删除资源', previous.id, requestId);
+        } else fail(404, 'NOT_FOUND', '接口不存在');
+      } else if (method === 'GET' && path === '/locations') data = locationNodes();
+      else if (
+        (method === 'POST' && path === '/locations') ||
+        (method === 'PATCH' && /^\/locations\/[^/]+$/.test(path))
+      ) {
+        const previous = method === 'PATCH' ? getLocation(path.split('/')[2]) : undefined;
+        const input = validateLocation(body, previous);
+        const result = saveLocation(input, previous);
+        data = result;
+        status = previous ? 200 : 201;
+        audit(previous ? '编辑位置' : '新增位置', result.id, requestId);
+      } else if (method === 'DELETE' && /^\/locations\/[^/]+$/.test(path)) {
+        const entry = getLocation(path.split('/')[2]);
+        deleteLocation(entry);
+        data = entry;
+        audit('删除位置', entry.id, requestId);
+      } else if (method === 'GET' && path === '/credential-profiles') data = credentials;
+      else if (
+        (method === 'POST' && path === '/credential-profiles') ||
+        (method === 'PATCH' && /^\/credential-profiles\/[^/]+$/.test(path))
+      ) {
+        const previous =
+          method === 'PATCH'
+            ? (credentials.find((entry) => entry.id === path.split('/')[2]) ??
+              fail(404, 'NOT_FOUND', '认证配置不存在'))
+            : undefined;
+        const input = validateCredential(body);
+        if (
+          credentials.some(
+            (entry) =>
+              entry.id !== previous?.id && entry.name.toLowerCase() === input.name.toLowerCase(),
+          )
+        )
+          fail(409, 'AUTH_CONFLICT', '认证配置名称已存在');
+        if (
+          previous &&
+          previous.method !== input.method &&
+          discoveries.some((task) => task.credentialProfileId === previous.id)
+        )
+          fail(409, 'RESOURCE_IN_USE', '被引用的认证配置不可更改方式');
+        const result = { ...input, id: previous?.id ?? id('auth'), secretMask: '••••••••' };
+        credentials = previous
+          ? credentials.map((entry) => (entry.id === previous.id ? result : entry))
+          : [...credentials, result];
+        data = result;
+        status = previous ? 200 : 201;
+        audit('保存虚构认证配置', result.id, requestId);
+      } else if (method === 'DELETE' && /^\/credential-profiles\/[^/]+$/.test(path)) {
+        const entry =
+          credentials.find((item) => item.id === path.split('/')[2]) ??
+          fail(404, 'NOT_FOUND', '认证配置不存在');
+        if (discoveries.some((task) => task.credentialProfileId === entry.id))
+          fail(409, 'RESOURCE_IN_USE', '认证配置已被发现任务引用');
+        credentials = credentials.filter((item) => item.id !== entry.id);
+        data = entry;
+        audit('删除虚构认证配置', entry.id, requestId);
+      } else if (method === 'POST' && path === '/ip-pools') {
+        const input: IpPoolInput = {
+          name: required(body.name, 'name'),
+          cidr: required(body.cidr, 'cidr'),
+          gateway: required(body.gateway, 'gateway'),
+          dataCenterId: required(body.dataCenterId, 'dataCenterId'),
+          purpose: choice(body.purpose, 'purpose', ['in-band', 'out-of-band', 'general']),
+        };
+        if (getLocation(input.dataCenterId).kind !== 'idc')
+          fail(400, 'VALIDATION_ERROR', '网段需关联 IDC');
+        const range =
+          subnetRange(input.cidr) ??
+          fail(400, 'CIDR_INVALID', '仅允许规范网络地址的 RFC 5737 文档保留网段，前缀 /24–/30');
+        const gateway = ipv4Number(input.gateway);
+        if (gateway === null || gateway <= range.first || gateway >= range.last)
+          fail(400, 'GATEWAY_INVALID', '网关需为网段内可用主机地址');
+        if (
+          pools.some((pool) => {
+            const other = subnetRange(pool.cidr)!;
+            return range.first <= other.last && other.first <= range.last;
+          })
+        )
+          fail(409, 'SUBNET_OVERLAP', '网段与已有网段重叠，本期不提供 VRF 隔离');
+        if (
+          pools.some(
+            (pool) =>
+              pool.dataCenterId === input.dataCenterId &&
+              pool.name.toLowerCase() === input.name.toLowerCase(),
+          )
+        )
+          fail(409, 'POOL_CONFLICT', '同 IDC 网段名称已存在');
+        const result: IpPool = { ...input, id: id('pool'), addressCount: 0, allocatedCount: 0 };
+        const generated: Address[] = [];
+        for (let ip = range.first + 1; ip < range.last && generated.length < 16; ip++)
+          if (ip !== gateway)
+            generated.push({ id: id('ip'), poolId: result.id, ip: ipv4Text(ip), serverId: null });
+        pools.push(result);
+        addresses.push(...generated);
+        data = poolView(result);
+        status = 201;
+        audit('新增演示网段', result.id, requestId);
+      } else if (['PATCH', 'DELETE'].includes(method) && /^\/ip-pools\/[^/]+$/.test(path)) {
+        const pool =
+          pools.find((entry) => entry.id === path.split('/')[2]) ??
+          fail(404, 'NOT_FOUND', '网段不存在');
+        if (method === 'PATCH') {
+          if (Object.keys(body).some((key) => key !== 'name'))
+            fail(400, 'VALIDATION_ERROR', '仅允许改名；CIDR、网关、IDC 和用途创建后不可变');
+          const name = required(body.name, 'name');
+          if (
+            pools.some(
+              (entry) =>
+                entry.id !== pool.id &&
+                entry.dataCenterId === pool.dataCenterId &&
+                entry.name.toLowerCase() === name.toLowerCase(),
+            )
+          )
+            fail(409, 'POOL_CONFLICT', '同 IDC 网段名称已存在');
+          pool.name = name;
+          data = poolView(pool);
+        } else {
+          if (
+            addresses.some((address) => address.poolId === pool.id && address.serverId) ||
+            discoveries.some((task) => task.poolId === pool.id)
+          )
+            fail(409, 'RESOURCE_IN_USE', '网段已有分配或发现任务引用');
+          data = poolView(pool);
+          pools = pools.filter((entry) => entry.id !== pool.id);
+          addresses = addresses.filter((entry) => entry.poolId !== pool.id);
+        }
+        audit(method === 'PATCH' ? '网段改名' : '删除演示网段', pool.id, requestId);
+      } else if (method === 'POST' && path === '/template-validations') {
+        const scriptType = choice(body.scriptType, 'scriptType', ['shell', 'kickstart', 'python']);
+        data = checkScript(scriptType, typeof body.content === 'string' ? body.content : '');
+      } else if (method === 'GET' && path === '/images') {
+        const q = (params.get('q') ?? '').toLowerCase();
+        data = paginate(
+          images.filter((image) => `${image.name} ${image.version}`.toLowerCase().includes(q)),
+          params,
+          ['name', 'createdAt'],
+          'name',
+        );
+      } else if (method === 'POST' && path === '/images') {
+        const image: ImageInput = {
+          name: required(body.name, 'name'),
+          version: required(body.version, 'version', 32),
+          family: choice(body.family, 'family', ['ubuntu', 'rocky']),
+          architecture: choice(body.architecture, 'architecture', ['x86_64']),
+          sourceLabel: required(body.sourceLabel, 'sourceLabel', 128),
+          checksum: required(body.checksum, 'checksum', 64).toLowerCase(),
+          status: choice(body.status, 'status', ['draft', 'ready']),
+        };
+        if (!/^[a-f0-9]{64}$/.test(image.checksum))
+          fail(400, 'VALIDATION_ERROR', 'SHA-256 必须为 64 位十六进制字符串', {
+            checksum: '仅保存声明值，不校验真实文件',
+          });
+        if (
+          images.some(
+            (entry) =>
+              entry.name.toLowerCase() === image.name.toLowerCase() &&
+              entry.version.toLowerCase() === image.version.toLowerCase(),
+          )
+        )
+          fail(409, 'IMAGE_CONFLICT', '同名同版本镜像已存在');
+        const result: ImageArtifact = { ...image, id: id('img'), createdAt: timestamp() };
+        images.unshift(result);
+        data = result;
+        status = 201;
+        audit('新增演示镜像元数据', result.id, requestId);
+      } else if (method === 'GET' && path === '/templates') {
+        const q = (params.get('q') ?? '').toLowerCase();
+        data = paginate(
+          templates.filter((template) =>
+            `${template.name} ${template.version}`.toLowerCase().includes(q),
+          ),
+          params,
+          ['name', 'createdAt'],
+          'name',
+        );
+      } else if (method === 'POST' && path === '/templates') {
+        const result = makeTemplate(body);
+        data = result;
+        status = 201;
+        audit('新增演示装机模板', result.id, requestId);
+      } else if (method === 'POST' && /^\/templates\/[^/]+\/versions$/.test(path)) {
+        if (body.scriptType === undefined || typeof body.content !== 'string')
+          fail(400, 'VALIDATION_ERROR', '新版本必须提交脚本类型与文本');
+        if (Object.keys(body).some((key) => !['version', 'scriptType', 'content'].includes(key)))
+          fail(400, 'VALIDATION_ERROR', '新版本只允许修改版本和脚本文本');
+        const original = getTemplate(path.split('/')[2]);
+        data = makeTemplate({
+          ...original,
+          ...body,
+          version: required(body.version, 'version', 32),
+        });
+        status = 201;
+        audit('保存模板新版本', (data as InstallTemplate).id, requestId);
+      } else if (method === 'POST' && path === '/installation-previews')
+        data = preview(validateInstallRequest(body));
+      else if (method === 'POST' && path === '/installation-preflights')
+        data = preflight(validateInstallRequest(body));
+      else if (method === 'GET' && path === '/dashboard') {
+        data = {
+          total: servers.length,
+          available: servers.filter((s) => s.status === 'ready').length,
+          installing: servers.filter((s) => s.status === 'installing').length,
+          warning: servers.filter((s) => s.health === 'warning' && s.status !== 'retired').length,
+          addressesUsed: addresses.filter((a) => a.serverId).length,
+          addressesTotal: addresses.length,
+          installations: installations.slice(0, 4),
+          alerts: servers
+            .filter((s) => s.health === 'warning' && s.status !== 'retired')
+            .map((s) => ({ serverId: s.id, name: s.name, message: '内存纠错次数偏高 · 模拟告警' })),
+        } satisfies Dashboard;
+      } else if (method === 'GET' && path === '/servers') {
+        const q = (params.get('q') ?? '').toLowerCase();
+        const dc = params.get('dataCenterId');
+        const statusFilter = params.get('status');
+        if (statusFilter)
+          choice(statusFilter, 'status', ['ready', 'installing', 'maintenance', 'retired']);
+        data = paginate(
+          servers.filter(
+            (s) =>
+              `${s.name} ${s.assetTag} ${s.serial} ${s.model}`.toLowerCase().includes(q) &&
+              (!statusFilter || s.status === statusFilter) &&
+              (!dc || racks().find((r) => r.id === s.rackId)?.dataCenterId === dc),
+          ),
+          params,
+          ['name', 'assetTag', 'createdAt', 'memoryGb'],
+          'assetTag',
+        );
+      } else if (method === 'POST' && path === '/servers') {
+        data = addServer(validateServer(body));
+        audit('创建服务器', (data as Server).name, requestId);
+        status = 201;
+      } else if (method === 'GET' && /^\/servers\/[^/]+$/.test(path))
+        data = getServer(path.split('/')[2]);
+      else if (method === 'POST' && /^\/servers\/[^/]+\/power$/.test(path)) {
+        const server = getServer(path.split('/')[2]);
+        const action = choice(body.action, 'action', ['on', 'off', 'reboot']);
+        if (server.status === 'retired' || server.status === 'installing')
+          fail(409, 'STATE_CONFLICT', '退役或装机中的服务器不能操作电源');
+        server.power = action === 'off' ? 'off' : 'on';
+        data = server;
+        audit(`模拟电源 ${action}`, server.name, requestId);
+      } else if (method === 'PATCH' && /^\/servers\/[^/]+\/lifecycle$/.test(path)) {
+        const server = getServer(path.split('/')[2]);
+        const next = choice<ServerStatus>(body.status, 'status', [
+          'ready',
+          'maintenance',
+          'retired',
+        ]);
+        if (server.status === 'installing' || server.status === 'retired')
+          fail(409, 'STATE_CONFLICT', '装机中或已退役的服务器不能切换生命周期');
+        if (next === 'retired' && addresses.some((a) => a.serverId === server.id))
+          fail(409, 'RESOURCE_IN_USE', '请先回收该服务器的 IP 地址再退役');
+        server.status = next;
+        if (next === 'retired') server.power = 'off';
+        data = server;
+        audit(`生命周期变更 ${next}`, server.name, requestId);
+      } else if (method === 'GET' && path === '/discoveries')
+        data = paginate(discoveries, params, ['createdAt'], 'createdAt');
+      else if (method === 'POST' && path === '/discoveries') {
+        if (
+          Object.keys(body).some(
+            (key) => !['poolId', 'method', 'credentialProfileId'].includes(key),
+          )
+        )
+          fail(
+            400,
+            'SECRET_FIELD_FORBIDDEN',
+            '发现只接收网段、方式和虚构认证配置 ID，不接收密码或其他字段',
+          );
+        const poolId = required(body.poolId, 'poolId');
+        if (!pools.some((p) => p.id === poolId)) fail(400, 'VALIDATION_ERROR', '请选择演示网段');
+        const scanMethod = choice(body.method, 'method', ['in-band', 'out-of-band']);
+        const credentialId =
+          body.credentialProfileId === undefined
+            ? `auth-${scanMethod}`
+            : required(body.credentialProfileId, 'credentialProfileId');
+        const credential =
+          credentials.find((entry) => entry.id === credentialId) ??
+          fail(404, 'NOT_FOUND', '虚构认证配置不存在');
+        if (credential.method !== scanMethod)
+          fail(409, 'AUTH_METHOD_MISMATCH', '认证配置与发现方式不匹配');
+        const discoveryId = id('scan');
+        const candidates: Candidate[] = [1, 2].map((n) => ({
+          id: `${discoveryId}-c${n}`,
+          serial: `DEMO-${discoveryId}-${n}`,
+          model: n === 1 ? 'Dell PowerEdge R750' : 'HPE ProLiant DL380',
+          name: `discovered-${discoveryId}-${n}`,
+          importedServerId: null,
+        }));
+        const task: Discovery = {
+          credentialProfileId: credentialId,
+          credential: structuredClone(credential),
+          id: discoveryId,
+          poolId,
+          method: scanMethod,
+          status: 'running',
+          progress: 0,
+          candidates,
+          createdAt: timestamp(),
+        };
+        discoveries.unshift(task);
+        data = task;
+        audit('启动模拟发现', discoveryId, requestId);
+        status = 201;
+      } else if (method === 'POST' && /^\/discoveries\/[^/]+\/import$/.test(path)) {
+        const task =
+          discoveries.find((t) => t.id === path.split('/')[2]) ??
+          fail(404, 'NOT_FOUND', '发现任务不存在');
+        if (task.status !== 'succeeded') fail(409, 'STATE_CONFLICT', '请等待发现任务完成');
+        const candidate =
+          task.candidates.find((c) => c.id === body.candidateId) ??
+          fail(404, 'NOT_FOUND', '候选设备不存在');
+        if (candidate.importedServerId) fail(409, 'ALREADY_IMPORTED', '此设备已入库');
+        const server = addServer(
+          validateServer({
+            ...body,
+            name: candidate.name,
+            serial: candidate.serial,
+            model: candidate.model,
+            memoryGb: 128,
+            height: 2,
+          }),
+        );
+        candidate.importedServerId = server.id;
+        data = server;
+        audit('发现设备入库', server.name, requestId);
+        status = 201;
+      } else if (method === 'GET' && path === '/addresses') {
+        const q = params.get('q') ?? '';
+        const statusFilter = params.get('status');
+        if (statusFilter) choice(statusFilter, 'status', ['free', 'allocated']);
+        data = paginate(
+          addresses.filter(
+            (a) =>
+              (!params.get('poolId') || a.poolId === params.get('poolId')) &&
+              a.ip.includes(q) &&
+              (!statusFilter || (statusFilter === 'free' ? !a.serverId : !!a.serverId)),
+          ),
+          params,
+          ['ip'],
+          'ip',
+        );
+      } else if (method === 'POST' && path === '/address-allocations') {
+        const address =
+          addresses.find((a) => a.id === body.addressId) ?? fail(404, 'NOT_FOUND', '地址不存在');
+        const server = getServer(required(body.serverId, 'serverId'));
+        if (address.serverId) fail(409, 'IP_CONFLICT', '该 IP 已被分配');
+        if (server.status === 'retired' || server.status === 'installing')
+          fail(409, 'STATE_CONFLICT', '该服务器当前无法绑定地址');
+        const pool = pools.find((p) => p.id === address.poolId);
+        const rack = racks().find((r) => r.id === server.rackId);
+        if (pool?.dataCenterId !== rack?.dataCenterId)
+          fail(409, 'DATA_CENTER_MISMATCH', '服务器与 IP 资源池必须属于同一数据中心');
+        if (
+          addresses.some(
+            (a) =>
+              a.serverId === server.id &&
+              pools.find((entry) => entry.id === a.poolId)?.purpose === pool?.purpose,
+          )
+        )
+          fail(409, 'IP_CONFLICT', '每台设备在同一用途下仅绑定一个 IP');
+        address.serverId = server.id;
+        data = address;
+        audit('分配 IP', `${address.ip} → ${server.name}`, requestId);
+        status = 201;
+      } else if (method === 'DELETE' && /^\/address-allocations\/[^/]+$/.test(path)) {
+        const address =
+          addresses.find((a) => a.id === path.split('/')[2]) ??
+          fail(404, 'NOT_FOUND', '地址不存在');
+        const serverId = address.serverId ?? fail(409, 'STATE_CONFLICT', '地址已空闲');
+        if (getServer(serverId).status === 'installing')
+          fail(409, 'RESOURCE_IN_USE', '装机中不能回收 IP');
+        address.serverId = null;
+        data = address;
+        audit('回收 IP', address.ip, requestId);
+      } else if (method === 'GET' && path === '/installations')
+        data = paginate(installations, params, ['createdAt'], 'createdAt');
+      else if (method === 'GET' && /^\/installations\/[^/]+$/.test(path))
+        data = getInstallation(path.split('/')[2]);
+      else if (method === 'POST' && /^\/installations\/[^/]+\/retry$/.test(path)) {
+        const original = getInstallation(path.split('/')[2]);
+        if (original.status !== 'failed') fail(409, 'STATE_CONFLICT', '只有失败任务允许重试');
+        if (installations.some((entry) => entry.retryOf === original.id))
+          fail(409, 'ALREADY_RETRIED', '该失败任务已创建重试，请查看新任务');
+        const input: InstallRequest = {
+          serverId: original.serverId,
+          imageId: original.parameters.image.id,
+          templateId: original.parameters.template.id,
+          hostname: original.parameters.hostname,
+          method: original.method,
+        };
+        data = createInstallation(input, requestId, original.id);
+        status = 201;
+      } else if (method === 'POST' && path === '/installations') {
+        data = createInstallation(validateInstallRequest(body), requestId);
+        status = 201;
+      } else if (method === 'GET' && path === '/audit-events') {
+        const q = (params.get('q') ?? '').toLowerCase();
+        data = paginate(
+          events.filter((e) => `${e.action} ${e.target} ${e.requestId}`.toLowerCase().includes(q)),
+          params,
+          ['createdAt'],
+          'createdAt',
+        );
+      } else fail(404, 'NOT_FOUND', '接口不存在');
+      return Response.json({ data, requestId }, { status });
+    } catch (error) {
+      const e =
+        error instanceof DomainError
+          ? error
+          : new DomainError(500, 'INTERNAL_ERROR', '模拟服务内部错误');
+      return Response.json(
+        {
+          error: { code: e.code, message: e.message, ...(e.fields ? { fields: e.fields } : {}) },
+          requestId,
+        },
+        { status: e.status },
+      );
+    }
+  };
+  reset();
+  return {
+    transport,
+    reset,
+    setScenario: (next: Scenario) => {
+      if (next === 'empty' || scenario === 'empty') reset(next);
+      else scenario = next;
+    },
+    getScenario: () => scenario,
+  };
+}
+
+export const mockService = createMockService();

@@ -1,5 +1,58 @@
 # Oak
 
-Oak is a MamreTek bare-metal infrastructure management product.
+MamreTek 企业裸金属资源管理产品原型。React + TypeScript + Ant Design，默认中文。
 
-The initial product prototype will use React, TypeScript, Ant Design and isolated synthetic Mock data. It is not production-ready and will not connect to real infrastructure. Product implementation is delivered through issue branches and pull requests.
+**产品原型 / 模拟数据：没有真实后端或权限保护，不用于生产。** 不扫描网络、不操作真实服务器、不采集凭据、不接入生产数据。所有状态保存在浏览器内存中，刷新页面会恢复合成种子数据；不同浏览器会话互不共享。
+
+## 本地运行
+
+使用 Node **22.22.1**（最低 22.12）和 npm：
+
+```sh
+npm ci --ignore-scripts
+npm run dev -- --port 5194 --strictPort
+```
+
+打开 `http://127.0.0.1:5194`。默认仅监听本机；这不是生产部署。
+
+```sh
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+## 体验完整流程
+
+1. **设备发现**：新建任务，选择东区网段与发现方式。任务完成后展开候选设备，确认资产编号、机架和 U 位并入库。
+2. **IDC管理 / 楼栋管理 / 机房管理 / 机架管理**：四个独立菜单，分别查询、新增、编辑、查看及删除资源；逐级选择父级，保留完整位置路径。机架详情展示 U 位，被引用资源不能删除或缩容挤占。服务器资产页仍可查询设备、模拟监控与生命周期。旧 `/facilities` 地址转到 `/idcs`。
+3. **IP 资源池**：先管理网段，再点击“IP 管理”分配/回收网段内地址。带内、带外和通用用途分别限制每设备一个 IP；装机必须有带内业务 IP。网段仅使用文档保留地址，全局不重叠，最多展开 16 个合成可用 IP。
+4. **镜像与模板**：维护合成镜像记录和关联模板；编辑 Shell/Kickstart/Python 文本、基础检查并保存新版本，原记录和任务快照保留。不上传、下载介质或执行脚本。
+5. **系统安装**：选择设备、镜像、模板、主机名和 PXE/ISO，预览网络/磁盘计划，运行逐项预检并确认覆盖影响后创建模拟任务。可勾选模拟失败，查看失败阶段、时间日志，再预检并创建关联重试；原失败记录保留。
+6. **操作审计**：查看任务与资源写操作的模拟记录和请求 ID。
+
+页面顶部可切换正常、空数据和服务失败场景；点“重置”清除当前演示操作。界面保留导航和业务按钮，本期不新增菜单、按钮、接口权限。
+
+“设备发现 → 认证配置”只管理虚构 demo- 用户别名、协议和固定掩码，没有密码输入/显示，也不存储真实密码或令牌。发现任务可选择匹配方式的配置并保存元数据快照。不要输入生产数据、真实凭据或生产脚本。脚本检查只覆盖有限文本规则，不能证明完整语法、兼容性或安全；文本不会执行或作为 HTML 渲染。
+
+## 工程与契约
+
+- `src/app`：路由、主题、应用布局。
+- `src/features`：总览、IDC、资产、发现、网络、镜像/模板、装机、审计。
+- `src/shared/api/contracts.ts`：请求相关模型与响应类型。
+- `src/shared/api/client.ts`：统一客户端、超时和错误处理。
+- `src/shared/api/mock.ts`：隔离的 Request/Response 处理器、合成数据和状态约束。
+- [API 契约](docs/api-contract.md)：方法、路径、字段、分页、错误、状态转换和示例。
+- [四表设计草案](docs/database-design.md)：独立 IDC、楼栋、机房、机架表及父键/唯一/引用约束；当前用四套内存 Mock，未实际建表。
+- [装机参考与边界](docs/provisioning-reference.md)：CloudBoot/Cobbler 参考、本期选择和未验证能力。
+- [工程规范 1.3 快照](docs/development-conventions.md)、[UI 参考与对比](docs/ui-reference.md)、[本期决定](docs/project-decisions.md)、[验证记录](docs/verification.md)。
+
+当前入口固定注入 Mock transport，所有请求在内存完成。它不是 HTTP 服务器；`oak.mock` 只是 Request 路由标识，不发生外部网络访问。未来后端实现同一契约后，通过显式注入 HTTP transport 接入，并重新完成认证、资源隔离、授权、并发和真实业务验收；当前未提供可误接生产的地址配置。
+
+装机契约使用镜像/模板 ID 和主机名，独立资源及脚本增量见 v1.3 草案。预检只检查演示业务规则；介质 SHA-256、硬件/启动兼容、磁盘容量、PXE 网络均未实际验证。预览为不可执行的声明式 JSON，包含模板版本脚本文本快照，不是可用的系统安装文件。当前镜像系列限 Ubuntu/Rocky、介质架构限 x86_64；装机选择器读取前 100 条资源。原型不宣称已经兼容参考项目的协议或安装介质。
+
+## 未完成的真实能力
+
+真实数据库和持久化、硬件盘点/扫描、BMC、电源控制、PXE/ISO 执行、凭据保险库、真实遥测/告警通知、权限、持久任务及不可篡改审计均未实现。位置与网段可编辑合成数据，但不移动父级、不接入真实拓扑或网络；脚本仅存文本和新版本。原型通过不等于生产或安全验收通过。
+
+需求按 **REQ-001** 跟踪，完整 PRD 保存在项目外部的 Mamre 工作流记录中：[Issue #1](https://github.com/MamreTek/oak/issues/1)。
