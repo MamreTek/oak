@@ -218,7 +218,7 @@ export function App() {
           Layout: { headerBg: '#fff', siderBg: '#fff' },
           Menu: { itemBorderRadius: 4, itemHeight: 40 },
           Card: { headerFontSize: 16 },
-          Table: { headerBg: '#fafafa' },
+          Table: { headerBg: '#fafafa', cellPaddingBlockMD: 8 },
         },
       }}
     >

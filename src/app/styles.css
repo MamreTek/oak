@@ -305,6 +305,7 @@ a {
 }
 .small {
   font-size: 12px;
+  line-height: 18px;
 }
 .mono {
   font-family: 'SFMono-Regular', Consolas, monospace;
@@ -354,7 +355,7 @@ a {
   font-size: 14px;
 }
 .ant-table-cell .muted {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 .ant-table-cell .ant-btn-link {
   padding-inline: 0;
