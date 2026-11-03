@@ -45,6 +45,10 @@ describe('prototype interactions', () => {
     expect(
       await screen.findByRole('button', { name: 'oak-ui-test' }, { timeout: 5000 }),
     ).toBeInTheDocument();
+    const filters = screen.getByRole('form', { name: '服务器查询条件' });
+    await user.click(within(filters).getByRole('button', { name: /^重\s*置$/ }));
+    expect(screen.getByRole('searchbox', { name: '搜索服务器' })).toHaveValue('');
+    expect(await screen.findByText('共 13 台')).toBeInTheDocument();
   }, 30000);
   it('recovers from a service error and displays empty data through the shared adapter', async () => {
     const user = userEvent.setup();

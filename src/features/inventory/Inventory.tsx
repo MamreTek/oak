@@ -14,7 +14,7 @@ import {
   Tag,
   Tabs,
 } from 'antd';
-import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useCallback, useContext, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { ListQuery, Server, ServerInput } from '../../shared/api/contracts';
@@ -45,7 +45,7 @@ export function Inventory() {
     sort: 'assetTag',
     order: 'asc',
   });
-  const [search, setSearch] = useState('');
+  const [filters] = Form.useForm<{ q?: string; dataCenterId?: string; status?: string }>();
   const [create, setCreate] = useState(false);
   const [detail, setDetail] = useState<string>();
   const servers = useQuery(useCallback(() => api.servers(query), [query]));
@@ -63,45 +63,76 @@ export function Inventory() {
         eyebrow="BARE-METAL INVENTORY"
         title="服务器资产"
         description="统一查看硬件、资源位置与生命周期，所有操作仅作用于演示数据。"
-        extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreate(true)}>
-            添加服务器
-          </Button>
-        }
       />
-      <Card>
-        <div className="table-toolbar">
-          <Input.Search
-            prefix={<SearchOutlined />}
-            placeholder="名称、资产编号、序列号或型号"
-            aria-label="搜索服务器"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onSearch={(q) => update({ q })}
-            allowClear
-            style={{ width: 320 }}
-          />
-          <Select
-            aria-label="筛选数据中心"
-            placeholder="全部数据中心"
-            allowClear
-            options={facilities.data?.map((dc) => ({ label: dc.name, value: dc.id }))}
-            onChange={(dataCenterId) => update({ dataCenterId })}
-            style={{ width: 180 }}
-          />
-          <Select
-            aria-label="筛选服务器状态"
-            placeholder="全部状态"
-            allowClear
-            options={statusOptions}
-            onChange={(status) => update({ status })}
-            style={{ width: 140 }}
-          />
-          <Button aria-label="刷新服务器" icon={<ReloadOutlined />} onClick={servers.reload} />
-        </div>
+      <Card className="query-card">
+        <Form
+          form={filters}
+          aria-label="服务器查询条件"
+          layout="inline"
+          className="query-form"
+          onFinish={(values) => update(values)}
+        >
+          <Form.Item name="q" label="关键字">
+            <Input
+              type="search"
+              placeholder="名称、编号、序列号或型号"
+              aria-label="搜索服务器"
+              allowClear
+            />
+          </Form.Item>
+          <Form.Item name="dataCenterId" label="数据中心">
+            <Select
+              aria-label="筛选数据中心"
+              placeholder="全部数据中心"
+              allowClear
+              options={facilities.data?.map((dc) => ({ label: dc.name, value: dc.id }))}
+            />
+          </Form.Item>
+          <Form.Item name="status" label="状态">
+            <Select
+              aria-label="筛选服务器状态"
+              placeholder="全部状态"
+              allowClear
+              options={statusOptions}
+            />
+          </Form.Item>
+          <Form.Item className="query-actions">
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button
+                onClick={() => {
+                  filters.resetFields();
+                  setQuery((old) => ({
+                    page: 1,
+                    pageSize: old.pageSize,
+                    sort: old.sort,
+                    order: old.order,
+                  }));
+                }}
+              >
+                重置
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Card>
+      <Card
+        title="服务器列表"
+        extra={
+          <Space>
+            <Button aria-label="刷新服务器" icon={<ReloadOutlined />} onClick={servers.reload} />
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreate(true)}>
+              添加服务器
+            </Button>
+          </Space>
+        }
+      >
         <QueryView query={servers}>
           {(data) => (
             <Table<Server>
+              size="middle"
               rowKey="id"
               scroll={{ x: 1000 }}
               locale={{

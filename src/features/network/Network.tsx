@@ -103,6 +103,7 @@ export function Network() {
             value={search}
             prefix={<SearchOutlined />}
             placeholder="搜索 IP 地址"
+            enterButton="查询"
             aria-label="搜索 IP 地址"
             onChange={(e) => setSearch(e.target.value)}
             onSearch={(q) => update({ q })}
@@ -132,6 +133,7 @@ export function Network() {
         <QueryView query={addresses}>
           {(data) => (
             <Table<Address>
+              size="middle"
               rowKey="id"
               scroll={{ x: 700 }}
               dataSource={data.items}

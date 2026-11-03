@@ -70,6 +70,7 @@ export function Discovery() {
         <QueryView query={tasks}>
           {(data) => (
             <Table<DiscoveryTask>
+              size="middle"
               rowKey="id"
               dataSource={data.items}
               scroll={{ x: 750 }}

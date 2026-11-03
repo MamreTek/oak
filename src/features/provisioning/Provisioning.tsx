@@ -78,6 +78,7 @@ export function Provisioning() {
         <QueryView query={tasks}>
           {(data) => (
             <Table<Installation>
+              size="middle"
               rowKey="id"
               scroll={{ x: 900 }}
               dataSource={data.items}

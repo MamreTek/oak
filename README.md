@@ -40,7 +40,7 @@ npm run build
 - `src/shared/api/client.ts`：统一客户端、超时和错误处理。
 - `src/shared/api/mock.ts`：隔离的 Request/Response 处理器、合成数据和状态约束。
 - [API 契约](docs/api-contract.md)：方法、路径、字段、分页、错误、状态转换和示例。
-- [工程规范 1.2 快照](docs/development-conventions.md)、[本期决定](docs/project-decisions.md)、[验证记录](docs/verification.md)。
+- [工程规范 1.3 快照](docs/development-conventions.md)、[UI 参考与对比](docs/ui-reference.md)、[本期决定](docs/project-decisions.md)、[验证记录](docs/verification.md)。
 
 当前入口固定注入 Mock transport，所有请求在内存完成。它不是 HTTP 服务器；`oak.mock` 只是 Request 路由标识，不发生外部网络访问。未来后端实现同一契约后，通过显式注入 HTTP transport 接入，并重新完成认证、资源隔离、授权、并发和真实业务验收；当前未提供可误接生产的地址配置。
 

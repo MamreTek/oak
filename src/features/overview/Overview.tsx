@@ -1,11 +1,5 @@
 import { Alert, Button, Card, Col, Progress, Row, Space, Statistic, Tag } from 'antd';
-import {
-  ArrowRightOutlined,
-  CheckCircleOutlined,
-  DatabaseOutlined,
-  DeploymentUnitOutlined,
-  ThunderboltOutlined,
-} from '@ant-design/icons';
+import { ArrowRightOutlined, DatabaseOutlined, DeploymentUnitOutlined } from '@ant-design/icons';
 import { Link } from 'react-router-dom';
 import { useCallback } from 'react';
 import { api } from '../../shared/api/client';
@@ -35,8 +29,8 @@ export function Overview() {
     <>
       <PageHeader
         eyebrow="INFRASTRUCTURE OVERVIEW"
-        title="基础设施，一目了然。"
-        description="掌握裸金属资源的每一个状态，让交付从这里开始。"
+        title="资源总览"
+        description="查看服务器状态、IDC 容量、网络资源和装机任务。"
         extra={
           <Link to="/discovery">
             <Button type="primary" icon={<DeploymentUnitOutlined />}>
@@ -53,31 +47,26 @@ export function Overview() {
                 {
                   title: '服务器总数',
                   value: data.total,
-                  icon: <DatabaseOutlined />,
                   note: '覆盖全部演示数据中心',
                 },
                 {
                   title: '可用服务器',
                   value: data.available,
-                  icon: <CheckCircleOutlined />,
                   note: '完成网络分配后可装机',
                 },
                 {
                   title: '装机进行中',
                   value: data.installing,
-                  icon: <DeploymentUnitOutlined />,
                   note: '任务进度自动更新',
                 },
                 {
                   title: '需关注设备',
                   value: data.warning,
-                  icon: <ThunderboltOutlined />,
                   note: '模拟告警 · 无真实通知',
                 },
               ].map((item) => (
                 <Col xs={12} xl={6} key={item.title}>
                   <Card className="metric-card">
-                    <div className="metric-icon">{item.icon}</div>
                     <Statistic title={item.title} value={item.value} />
                     <div className="metric-note">{item.note}</div>
                   </Card>
@@ -109,18 +98,11 @@ export function Overview() {
                                   {dc.city} · {dc.racks.length} 个机架 · {dc.usedUnits}/
                                   {dc.capacity} U
                                 </span>
-                                <div className="rack-bars">
-                                  {Array.from({ length: 20 }, (_, n) => (
-                                    <i
-                                      className={
-                                        n < Math.round((dc.usedUnits / dc.capacity) * 20)
-                                          ? 'filled'
-                                          : ''
-                                      }
-                                      key={n}
-                                    />
-                                  ))}
-                                </div>
+                                <Progress
+                                  size="small"
+                                  percent={Math.round((dc.usedUnits / dc.capacity) * 100)}
+                                  showInfo={false}
+                                />
                               </div>
                               <Tag color="green">演示可用</Tag>
                             </div>
@@ -149,7 +131,7 @@ export function Overview() {
               </Col>
               <Col xs={24} xl={9}>
                 <Card title="交付工作流" className="workflow-card">
-                  <div className="workflow-intro">从发现到可用，保持每一步可追溯。</div>
+                  <div className="workflow-intro">设备发现、网络分配与系统交付。</div>
                   {[
                     ['01', '发现与入库', '识别带内 / 带外演示设备', '/discovery'],
                     ['02', '分配网络资源', '绑定地址，检查资源冲突', '/network'],

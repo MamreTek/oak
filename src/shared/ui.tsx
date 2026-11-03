@@ -1,4 +1,17 @@
-import { Alert, App, Button, Empty, Form, Modal, Result, Skeleton, Space, Tag } from 'antd';
+import {
+  Alert,
+  App,
+  Breadcrumb,
+  Button,
+  Empty,
+  Form,
+  Modal,
+  Result,
+  Skeleton,
+  Space,
+  Tag,
+} from 'antd';
+import { Link } from 'react-router-dom';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ServerStatus, TaskStatus } from './api/contracts';
@@ -66,25 +79,26 @@ export function QueryView<T>({
   return <>{children(query.data)}</>;
 }
 export function PageHeader({
-  eyebrow,
   title,
   description,
   extra,
 }: {
-  eyebrow: string;
+  eyebrow?: string;
   title: string;
   description: string;
   extra?: ReactNode;
 }) {
   return (
-    <div className="page-heading">
-      <div>
-        <div className="eyebrow">{eyebrow}</div>
-        <h1>{title}</h1>
-        <p>{description}</p>
+    <section className="page-heading">
+      <Breadcrumb items={[{ title: <Link to="/">首页</Link> }, { title }]} />
+      <div className="page-heading-main">
+        <div>
+          <h1>{title}</h1>
+          <p>{description}</p>
+        </div>
+        {extra && <div className="heading-actions">{extra}</div>}
       </div>
-      <div className="heading-actions">{extra}</div>
-    </div>
+    </section>
   );
 }
 export const statusText: Record<ServerStatus | TaskStatus, string> = {

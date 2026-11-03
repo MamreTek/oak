@@ -1,6 +1,7 @@
 import {
   Alert,
   App as AntApp,
+  Avatar,
   Button,
   ConfigProvider,
   Drawer,
@@ -19,7 +20,9 @@ import {
   CloudServerOutlined,
   DeploymentUnitOutlined,
   ExperimentOutlined,
+  MenuFoldOutlined,
   MenuOutlined,
+  MenuUnfoldOutlined,
   RadarChartOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
@@ -53,157 +56,169 @@ const navigation = [
   { key: '/provisioning', icon: <ExperimentOutlined />, label: '系统安装' },
   { key: '/audit', icon: <AuditOutlined />, label: '操作审计' },
 ];
+
 function Shell() {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobile, setMobile] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [scenario, setScenario] = useState<Scenario>('normal');
   const [revision, setRevision] = useState(0);
   const refresh = () => setRevision((v) => v + 1);
-  const nav = (
-    <>
-      <Link to="/" className="brand">
-        <span className="brand-mark">o</span>
-        <div>
-          <strong>oak</strong>
-          <small>BARE METAL CLOUD</small>
-        </div>
-      </Link>
-      <div className="nav-section">工作空间</div>
-      <Menu
-        theme="dark"
-        mode="inline"
-        selectedKeys={[location.pathname]}
-        items={navigation}
-        onClick={({ key }) => {
-          navigate(key);
-          setMobile(false);
-        }}
-      />
-      <div className="sidebar-bottom">
-        <Tag color="green">PRODUCT PREVIEW</Tag>
-        <p>MamreTek 产品实验室</p>
-        <span>让基础设施回归有序。</span>
-      </div>
-    </>
+  const brand = (
+    <Link to="/" className="brand">
+      <CloudServerOutlined className="brand-icon" />
+      <strong>Oak</strong>
+    </Link>
+  );
+  const menu = (
+    <Menu
+      theme="light"
+      mode="inline"
+      selectedKeys={[location.pathname]}
+      items={navigation}
+      onClick={({ key }) => {
+        navigate(key);
+        setMobile(false);
+      }}
+    />
   );
   return (
     <RefreshContext.Provider value={{ revision, refresh }}>
-      <Layout className="app-layout">
-        <Layout.Sider width={224} className="desktop-sidebar">
-          {nav}
-        </Layout.Sider>
-        <Drawer
-          placement="left"
-          open={mobile}
-          onClose={() => setMobile(false)}
-          className="mobile-nav"
-          styles={{ body: { background: '#102923', padding: 0 } }}
-          size={260}
-        >
-          {nav}
-        </Drawer>
-        <Layout className="main-layout">
-          <Layout.Header className="topbar">
-            <Space>
-              <Button
-                className="mobile-menu"
-                icon={<MenuOutlined />}
-                aria-label="打开导航"
-                onClick={() => setMobile(true)}
-              />
-              <span className="breadcrumb">
-                MamreTek <span>/</span> Oak <span>/</span>{' '}
-                <strong>{navigation.find((n) => n.key === location.pathname)?.label}</strong>
-              </span>
-            </Space>
-            <Space>
-              <span className="environment-dot" />
-              <span className="muted topbar-label">隔离演示环境</span>
-              <span className="avatar">O</span>
-            </Space>
-          </Layout.Header>
-          <Layout.Content className="content">
-            <div className="prototype-banner">
-              <Space>
-                <ExperimentOutlined />
-                <strong>产品原型 / 模拟数据</strong>
-                <span className="banner-detail">尚无真实后端与权限保护 · 不用于生产</span>
-              </Space>
-              <div className="demo-controls">
-                <Select
-                  size="small"
-                  aria-label="演示场景"
-                  value={scenario}
-                  options={[
-                    { value: 'normal', label: '正常场景' },
-                    { value: 'empty', label: '空数据场景' },
-                    { value: 'error', label: '服务失败场景' },
-                  ]}
-                  onChange={(value) => {
-                    mockService.setScenario(value);
-                    setScenario(value);
-                    refresh();
-                  }}
+      <Layout className={`app-layout ${collapsed ? 'nav-collapsed' : ''}`}>
+        <Layout.Header className="topbar">
+          <div className="topbar-left">
+            <Button
+              type="text"
+              className="mobile-menu"
+              icon={<MenuOutlined />}
+              aria-label="打开导航"
+              onClick={() => setMobile(true)}
+            />
+            {brand}
+            <Button
+              type="text"
+              className="desktop-collapse"
+              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+              onClick={() => setCollapsed((value) => !value)}
+            />
+            <span className="product-name">裸金属资源管理</span>
+          </div>
+          <Space size={12}>
+            <Tag color="blue">产品原型</Tag>
+            <span className="topbar-label">模拟环境</span>
+            <Avatar size="small">O</Avatar>
+          </Space>
+        </Layout.Header>
+        <Layout className="workspace-layout">
+          <Layout.Sider
+            width={208}
+            collapsedWidth={64}
+            collapsed={collapsed}
+            theme="light"
+            trigger={null}
+            className="desktop-sidebar"
+          >
+            {menu}
+            {!collapsed && <div className="sidebar-bottom">MamreTek · Oak</div>}
+          </Layout.Sider>
+          <Drawer
+            placement="left"
+            open={mobile}
+            onClose={() => setMobile(false)}
+            className="mobile-nav"
+            styles={{ body: { padding: 0 } }}
+            size={256}
+          >
+            <div className="drawer-brand">{brand}</div>
+            {menu}
+          </Drawer>
+          <Layout className="main-layout">
+            <Layout.Content className="content">
+              <div className="prototype-banner">
+                <Alert
+                  type="info"
+                  showIcon
+                  title={
+                    <Space wrap size={8}>
+                      <strong>产品原型 / 模拟数据</strong>
+                      <span>尚无真实后端与权限保护 · 不用于生产</span>
+                    </Space>
+                  }
                 />
-                <Tooltip title="恢复种子数据，清除当前演示操作">
-                  <Button
+                <div className="demo-controls">
+                  <Select
                     size="small"
-                    icon={<ReloadOutlined />}
-                    onClick={() => {
-                      mockService.reset();
-                      setScenario('normal');
+                    aria-label="演示场景"
+                    value={scenario}
+                    options={[
+                      { value: 'normal', label: '正常场景' },
+                      { value: 'empty', label: '空数据场景' },
+                      { value: 'error', label: '服务失败场景' },
+                    ]}
+                    onChange={(value) => {
+                      mockService.setScenario(value);
+                      setScenario(value);
                       refresh();
                     }}
-                  >
-                    重置
-                  </Button>
-                </Tooltip>
+                  />
+                  <Tooltip title="恢复种子数据，清除当前演示操作">
+                    <Button
+                      size="small"
+                      icon={<ReloadOutlined />}
+                      onClick={() => {
+                        mockService.reset();
+                        setScenario('normal');
+                        refresh();
+                      }}
+                    >
+                      重置
+                    </Button>
+                  </Tooltip>
+                </div>
               </div>
-            </div>
-            <Routes>
-              <Route path="/" element={<Overview />} />
-              <Route path="/facilities" element={<Facilities />} />
-              <Route path="/inventory" element={<Inventory />} />
-              <Route path="/discovery" element={<Discovery />} />
-              <Route path="/network" element={<Network />} />
-              <Route path="/provisioning" element={<Provisioning />} />
-              <Route path="/audit" element={<Audit />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-            <footer className="app-footer">
-              <span>OAK / INFRASTRUCTURE, ORGANIZED.</span>
-              <span>© 2026 MamreTek · Prototype 0.1</span>
-            </footer>
-          </Layout.Content>
+              <Routes>
+                <Route path="/" element={<Overview />} />
+                <Route path="/facilities" element={<Facilities />} />
+                <Route path="/inventory" element={<Inventory />} />
+                <Route path="/discovery" element={<Discovery />} />
+                <Route path="/network" element={<Network />} />
+                <Route path="/provisioning" element={<Provisioning />} />
+                <Route path="/audit" element={<Audit />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+              <footer className="app-footer">© 2026 MamreTek · Oak 产品原型</footer>
+            </Layout.Content>
+          </Layout>
         </Layout>
       </Layout>
       <Alert className="screen-reader-note" title="当前为无权限保护的模拟产品原型" />
     </RefreshContext.Provider>
   );
 }
+
 export function App() {
   return (
     <ConfigProvider
       locale={zhCN}
+      componentSize="middle"
       theme={{
         token: {
-          colorPrimary: '#217a5c',
-          colorInfo: '#217a5c',
-          colorBgLayout: '#f4f6f5',
-          colorText: '#172f27',
-          borderRadius: 8,
+          colorPrimary: '#1890ff',
+          colorInfo: '#1890ff',
+          colorBgLayout: '#f5f5f5',
+          colorText: 'rgba(0,0,0,0.88)',
+          fontSize: 14,
+          borderRadius: 6,
           fontFamily:
-            'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+            '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
         },
         components: {
-          Menu: {
-            darkItemBg: '#102923',
-            darkItemSelectedBg: '#25513f',
-            darkItemHoverBg: '#1c3a30',
-          },
-          Card: { headerFontSize: 15 },
-          Table: { headerBg: '#f8faf9' },
+          Layout: { headerBg: '#fff', siderBg: '#fff' },
+          Menu: { itemBorderRadius: 4, itemHeight: 40 },
+          Card: { headerFontSize: 16 },
+          Table: { headerBg: '#fafafa' },
         },
       }}
     >

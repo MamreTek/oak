@@ -14,10 +14,11 @@ export function Audit() {
         title="操作审计"
         description="追溯当前演示会话内的模拟操作；不是持久化或防篡改的生产审计。"
       />
-      <Card>
+      <Card title="操作记录">
         <div className="table-toolbar">
           <Input.Search
             placeholder="搜索动作、目标或请求 ID"
+            enterButton="查询"
             aria-label="搜索审计事件"
             allowClear
             onSearch={(q) => setQuery({ ...query, q, page: 1 })}
@@ -28,6 +29,7 @@ export function Audit() {
         <QueryView query={events}>
           {(data) => (
             <Table<AuditEvent>
+              size="middle"
               rowKey="id"
               dataSource={data.items}
               scroll={{ x: 950 }}
