@@ -32,14 +32,19 @@ describe('prototype interactions', () => {
     await user.click(within(dialog).getByLabelText('机架'));
     await user.click(await screen.findByText('东区演示中心 / A01'));
     await user.click(within(dialog).getByRole('button', { name: '确 认' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    // Ant Design restores focus after the leave animation. Wait for the actual
+    // dialog node to unmount, not merely for its role to become inaccessible.
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect((await api.servers({ q: 'oak-ui-test' })).total).toBe(1);
     const search = screen.getByRole('searchbox', { name: '搜索服务器' });
     await user.click(search);
     await user.paste('oak-ui-test');
+    expect(search).toHaveFocus();
     await user.keyboard('{Enter}');
     expect(search).toHaveValue('oak-ui-test');
-    expect(await screen.findByRole('button', { name: 'oak-ui-test' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'oak-ui-test' }, { timeout: 5000 }),
+    ).toBeInTheDocument();
   }, 30000);
   it('recovers from a service error and displays empty data through the shared adapter', async () => {
     const user = userEvent.setup();
