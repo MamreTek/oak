@@ -1,7 +1,6 @@
-import { Button, Card, Col, Form, Input, Row, Select, Statistic, Table, Tag } from 'antd';
-import { SearchOutlined } from '@ant-design/icons';
+import { Alert, Breadcrumb, Button, Card, Form, Input, Select, Space, Table, Tag } from 'antd';
 import { useCallback, useState } from 'react';
-import type { Address, ListQuery } from '../../shared/api/contracts';
+import type { Address, IpPool, IpPoolInput, ListQuery } from '../../shared/api/contracts';
 import { api } from '../../shared/api/client';
 import {
   EmptyState,
@@ -12,197 +11,328 @@ import {
   useQuery,
 } from '../../shared/ui';
 
+const purposeName = { 'in-band': '带内', 'out-of-band': '带外', general: '通用' };
 export function Network() {
+  const [selected, setSelected] = useState<string>();
   const [query, setQuery] = useState<ListQuery>({ page: 1, pageSize: 10 });
   const [search, setSearch] = useState('');
+  const [poolSearch, setPoolSearch] = useState('');
+  const [purpose, setPurpose] = useState<string>();
+  const [create, setCreate] = useState(false);
+  const [renaming, setRenaming] = useState<IpPool>();
   const [allocating, setAllocating] = useState<Address>();
-  const addresses = useQuery(useCallback(() => api.addresses(query), [query]));
   const resources = useQuery(
     useCallback(
       async () => ({
         pools: await api.pools(),
         servers: (await api.servers({ pageSize: 100 })).items,
         facilities: await api.facilities(),
-        addresses: (await api.addresses({ pageSize: 100 })).items,
       }),
       [],
     ),
   );
+  const addresses = useQuery(
+    useCallback(
+      async () =>
+        selected
+          ? api.addresses({ ...query, poolId: selected })
+          : { items: [] as Address[], total: 0, page: 1, pageSize: 10 },
+      [query, selected],
+    ),
+  );
   const confirm = useConfirmedAction();
+  const pool = resources.data?.pools.find((entry) => entry.id === selected);
   const update = (values: Partial<ListQuery>) =>
-    setQuery((old) => ({ ...old, ...values, page: values.page ?? 1 }));
-  const pool = resources.data?.pools.find((p) => p.id === allocating?.poolId);
+    setQuery((previous) => ({ ...previous, ...values, page: values.page ?? 1 }));
   const eligible =
     resources.data?.servers.filter(
-      (s) =>
-        ['ready', 'maintenance'].includes(s.status) &&
+      (server) =>
+        ['ready', 'maintenance'].includes(server.status) &&
         resources.data?.facilities
-          .find((f) => f.id === pool?.dataCenterId)
-          ?.racks.some((r) => r.id === s.rackId) &&
-        !resources.data?.addresses.some((a) => a.serverId === s.id),
+          .find((dc) => dc.id === pool?.dataCenterId)
+          ?.racks.some((rack) => rack.id === server.rackId),
     ) ?? [];
   return (
     <>
       <PageHeader
-        eyebrow="NETWORK RESOURCES"
         title="IP 资源池"
-        description="查看演示网段、分配和回收地址，保持设备与网络资源一致。"
+        description="先管理网段，再进入网段管理 IP。带内、带外和通用用途分别约束设备分配。"
+        extra={
+          !pool && (
+            <Button type="primary" onClick={() => setCreate(true)}>
+              新增演示网段
+            </Button>
+          )
+        }
+      />
+      <Alert
+        className="page-note"
+        type="info"
+        showIcon
+        title="仅文档保留地址，无网络操作"
+        description="只允许 RFC 5737 保留网段，前缀 /24–/30；每网段最多展示 16 个可分配合成地址。全局拒绝网段重叠，暂不提供 VRF；不会配置 DHCP、路由或真实设备。"
       />
       <QueryView query={resources}>
-        {(data) => (
-          <Row gutter={[16, 16]} className="pool-grid">
-            {data.pools.length ? (
-              data.pools.map((p) => {
-                const list = data.addresses.filter((a) => a.poolId === p.id);
-                const used = list.filter((a) => a.serverId).length;
-                return (
-                  <Col xs={24} md={12} key={p.id}>
-                    <Card className="pool-card" title={p.name} extra={<Tag>IPv4 · 演示</Tag>}>
-                      <div className="pool-summary">
-                        <div>
-                          <strong className="pool-cidr mono">{p.cidr}</strong>
-                          <p className="muted">网关 {p.gateway} · 文档保留地址</p>
-                        </div>
-                        <Statistic
-                          title="空闲 / 总地址"
-                          value={list.length - used}
-                          suffix={`/ ${list.length}`}
-                        />
-                      </div>
-                      <div className="address-cells">
-                        {list.map((a) => (
-                          <span
-                            key={a.id}
-                            title={`${a.ip} ${a.serverId ? '已分配' : '空闲'}`}
-                            className={a.serverId ? 'allocated' : ''}
-                          >
-                            {a.ip.split('.').pop()}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="pool-caption">
-                        已分配 {used} · 空闲 {list.length - used} · 本期仅演示 16 个可分配地址
-                      </div>
-                    </Card>
-                  </Col>
-                );
-              })
-            ) : (
-              <Col span={24}>
-                <Card>
-                  <EmptyState />
-                </Card>
-              </Col>
-            )}
-          </Row>
-        )}
-      </QueryView>
-      <Card title="地址分配">
-        <div className="table-toolbar">
-          <Input.Search
-            value={search}
-            prefix={<SearchOutlined />}
-            placeholder="搜索 IP 地址"
-            enterButton="查询"
-            aria-label="搜索 IP 地址"
-            onChange={(e) => setSearch(e.target.value)}
-            onSearch={(q) => update({ q })}
-            allowClear
-            style={{ width: 280 }}
-          />
-          <Select
-            placeholder="全部网段"
-            aria-label="筛选 IP 网段"
-            allowClear
-            style={{ width: 220 }}
-            options={resources.data?.pools.map((p) => ({ value: p.id, label: p.cidr }))}
-            onChange={(poolId) => update({ poolId })}
-          />
-          <Select
-            placeholder="全部分配状态"
-            aria-label="筛选 IP 状态"
-            allowClear
-            options={[
-              { value: 'free', label: '空闲' },
-              { value: 'allocated', label: '已分配' },
-            ]}
-            onChange={(status) => update({ status })}
-            style={{ width: 160 }}
-          />
-        </div>
-        <QueryView query={addresses}>
-          {(data) => (
-            <Table<Address>
-              size="middle"
-              rowKey="id"
-              scroll={{ x: 700 }}
-              dataSource={data.items}
-              locale={{ emptyText: <EmptyState text="没有匹配的 IP 地址。" /> }}
-              pagination={{
-                current: data.page,
-                pageSize: data.pageSize,
-                total: data.total,
-                showSizeChanger: false,
-                onChange: (page) => update({ page }),
-              }}
-              columns={[
-                {
-                  title: 'IP 地址',
-                  dataIndex: 'ip',
-                  sorter: true,
-                  render: (ip) => <strong className="mono">{ip}</strong>,
-                },
-                {
-                  title: '资源池',
-                  dataIndex: 'poolId',
-                  render: (id) => resources.data?.pools.find((p) => p.id === id)?.name,
-                },
-                {
-                  title: '状态',
-                  dataIndex: 'serverId',
-                  render: (id) => <Tag color={id ? 'blue' : 'green'}>{id ? '已分配' : '空闲'}</Tag>,
-                },
-                {
-                  title: '绑定设备',
-                  dataIndex: 'serverId',
-                  render: (id) => resources.data?.servers.find((s) => s.id === id)?.name ?? '—',
-                },
-                {
-                  title: '操作',
-                  render: (_, a) =>
-                    a.serverId ? (
-                      <Button
-                        type="link"
-                        danger
-                        onClick={() =>
-                          confirm(
-                            '回收模拟 IP',
-                            `${a.ip} · ${resources.data?.servers.find((s) => s.id === a.serverId)?.name}`,
-                            () => api.release(a.id),
-                          )
-                        }
-                      >
-                        回收
-                      </Button>
-                    ) : (
-                      <Button type="link" onClick={() => setAllocating(a)}>
-                        分配 IP
+        {(data) =>
+          !pool ? (
+            <Card title="网段列表">
+              <div className="table-toolbar">
+                <Input.Search
+                  aria-label="查询网段"
+                  placeholder="名称或 CIDR"
+                  allowClear
+                  onSearch={setPoolSearch}
+                  style={{ width: 320 }}
+                />
+                <Select
+                  aria-label="筛选网段用途"
+                  placeholder="全部用途"
+                  allowClear
+                  onChange={setPurpose}
+                  style={{ width: 160 }}
+                  options={Object.entries(purposeName).map(([value, label]) => ({ value, label }))}
+                />
+              </div>
+              <Table<IpPool>
+                rowKey="id"
+                size="middle"
+                scroll={{ x: 1000 }}
+                dataSource={data.pools.filter(
+                  (entry) =>
+                    `${entry.name} ${entry.cidr}`
+                      .toLowerCase()
+                      .includes(poolSearch.toLowerCase()) &&
+                    (!purpose || entry.purpose === purpose),
+                )}
+                pagination={{ pageSize: 10, showSizeChanger: false }}
+                locale={{ emptyText: <EmptyState text="暂无匹配网段，可新增文档保留网段。" /> }}
+                columns={[
+                  { title: '网段名称', dataIndex: 'name' },
+                  {
+                    title: 'CIDR / 网关',
+                    render: (_, entry) => (
+                      <>
+                        <strong className="mono">{entry.cidr}</strong>
+                        <div className="muted small">{entry.gateway}</div>
+                      </>
+                    ),
+                  },
+                  {
+                    title: 'IDC',
+                    dataIndex: 'dataCenterId',
+                    render: (id) => data.facilities.find((dc) => dc.id === id)?.name ?? id,
+                  },
+                  {
+                    title: '用途',
+                    dataIndex: 'purpose',
+                    render: (value: IpPool['purpose']) => <Tag>{purposeName[value]}</Tag>,
+                  },
+                  {
+                    title: '占用 / 展开地址',
+                    render: (_, entry) => `${entry.allocatedCount} / ${entry.addressCount}`,
+                  },
+                  {
+                    title: '操作',
+                    render: (_, entry) => (
+                      <Space wrap>
+                        <Button
+                          type="link"
+                          onClick={() => {
+                            setSelected(entry.id);
+                            setQuery({ page: 1, pageSize: 10 });
+                            setSearch('');
+                          }}
+                        >
+                          IP 管理
+                        </Button>
+                        <Button type="link" onClick={() => setRenaming(entry)}>
+                          网段改名
+                        </Button>
+                        <Button
+                          type="link"
+                          danger
+                          onClick={() =>
+                            confirm('删除模拟网段', `${entry.name} · ${entry.cidr}`, () =>
+                              api.deletePool(entry.id),
+                            )
+                          }
+                        >
+                          删除网段
+                        </Button>
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+            </Card>
+          ) : (
+            <Card>
+              <Breadcrumb
+                className="page-note"
+                items={[
+                  {
+                    title: (
+                      <Button type="link" onClick={() => setSelected(undefined)}>
+                        返回网段列表
                       </Button>
                     ),
-                },
-              ]}
-              onChange={(pagination, _, sorter) => {
-                const sort = Array.isArray(sorter) ? sorter[0] : sorter;
-                update({
-                  page: pagination.current,
-                  sort: 'ip',
-                  order: sort.order === 'descend' ? 'desc' : 'asc',
-                });
-              }}
+                  },
+                  { title: `${pool.name} / ${pool.cidr}` },
+                ]}
+              />
+              <h2>网段内 IP 管理</h2>
+              <p>
+                {purposeName[pool.purpose]} · 网关 {pool.gateway} · 已分配 {pool.allocatedCount} /{' '}
+                {pool.addressCount}
+              </p>
+              <div className="table-toolbar">
+                <Input.Search
+                  aria-label="搜索 IP 地址"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  onSearch={(q) => update({ q })}
+                  placeholder="搜索当前网段 IP"
+                  allowClear
+                  style={{ width: 280 }}
+                />
+                <Select
+                  aria-label="筛选 IP 状态"
+                  placeholder="全部分配状态"
+                  allowClear
+                  onChange={(status) => update({ status })}
+                  style={{ width: 180 }}
+                  options={[
+                    { value: 'free', label: '空闲' },
+                    { value: 'allocated', label: '已分配' },
+                  ]}
+                />
+              </div>
+              <QueryView query={addresses}>
+                {(result) => (
+                  <Table<Address>
+                    rowKey="id"
+                    size="middle"
+                    scroll={{ x: 700 }}
+                    dataSource={result.items}
+                    pagination={{
+                      current: result.page,
+                      pageSize: result.pageSize,
+                      total: result.total,
+                      onChange: (page) => update({ page }),
+                      showSizeChanger: false,
+                    }}
+                    columns={[
+                      {
+                        title: 'IP 地址',
+                        dataIndex: 'ip',
+                        sorter: true,
+                        render: (ip) => <strong className="mono">{ip}</strong>,
+                      },
+                      {
+                        title: '状态',
+                        dataIndex: 'serverId',
+                        render: (id) => (
+                          <Tag color={id ? 'blue' : 'green'}>{id ? '已分配' : '空闲'}</Tag>
+                        ),
+                      },
+                      {
+                        title: '设备',
+                        dataIndex: 'serverId',
+                        render: (id) =>
+                          data.servers.find((server) => server.id === id)?.name ?? '—',
+                      },
+                      {
+                        title: '操作',
+                        render: (_, address) =>
+                          address.serverId ? (
+                            <Button
+                              type="link"
+                              danger
+                              onClick={() =>
+                                confirm('回收模拟 IP', address.ip, () => api.release(address.id))
+                              }
+                            >
+                              回收
+                            </Button>
+                          ) : (
+                            <Button type="link" onClick={() => setAllocating(address)}>
+                              分配 IP
+                            </Button>
+                          ),
+                      },
+                    ]}
+                    onChange={(pagination, _, sorter) => {
+                      const sort = Array.isArray(sorter) ? sorter[0] : sorter;
+                      update({
+                        page: pagination.current,
+                        sort: 'ip',
+                        order: sort.order === 'descend' ? 'desc' : 'asc',
+                      });
+                    }}
+                  />
+                )}
+              </QueryView>
+            </Card>
+          )
+        }
+      </QueryView>
+      {create && (
+        <FormModal<IpPoolInput>
+          title="新增演示网段"
+          open
+          onClose={() => setCreate(false)}
+          initialValues={{ purpose: 'general' }}
+          onSubmit={async (values) => {
+            await api.createPool(values);
+            setPoolSearch('');
+            setPurpose(undefined);
+          }}
+        >
+          <Form.Item
+            name="name"
+            label="网段名称"
+            rules={[{ required: true, whitespace: true, max: 64 }]}
+          >
+            <Input maxLength={64} />
+          </Form.Item>
+          <Form.Item name="dataCenterId" label="所属 IDC" rules={[{ required: true }]}>
+            <Select
+              options={resources.data?.facilities.map((dc) => ({ value: dc.id, label: dc.name }))}
             />
-          )}
-        </QueryView>
-      </Card>
+          </Form.Item>
+          <Form.Item name="purpose" label="网段用途" rules={[{ required: true }]}>
+            <Select
+              options={Object.entries(purposeName).map(([value, label]) => ({ value, label }))}
+            />
+          </Form.Item>
+          <Form.Item name="cidr" label="文档保留 CIDR" rules={[{ required: true }]}>
+            <Input placeholder="203.0.113.0/28" maxLength={32} />
+          </Form.Item>
+          <Form.Item name="gateway" label="演示网关" rules={[{ required: true }]}>
+            <Input placeholder="203.0.113.1" maxLength={15} />
+          </Form.Item>
+          <p className="muted small">
+            CIDR、网关、用途和 IDC 创建后不可修改；需要变化时先建立新网段并按引用约束处理旧记录。
+          </p>
+        </FormModal>
+      )}
+      {renaming && (
+        <FormModal<{ name: string }>
+          title="网段改名"
+          open
+          onClose={() => setRenaming(undefined)}
+          initialValues={{ name: renaming.name }}
+          onSubmit={(values) => api.renamePool(renaming.id, values.name)}
+        >
+          <Form.Item
+            name="name"
+            label="网段名称"
+            rules={[{ required: true, whitespace: true, max: 64 }]}
+          >
+            <Input maxLength={64} />
+          </Form.Item>
+        </FormModal>
+      )}
       {allocating && (
         <FormModal<{ serverId: string }>
           title={`分配 IP · ${allocating.ip}`}
@@ -214,11 +344,17 @@ export function Network() {
             <Select
               showSearch
               optionFilterProp="label"
-              options={eligible.map((s) => ({ value: s.id, label: `${s.name} · ${s.assetTag}` }))}
-              notFoundContent="该数据中心没有未绑定 IP 的可用设备"
+              options={eligible.map((server) => ({
+                value: server.id,
+                label: `${server.name} · ${server.assetTag}`,
+              }))}
             />
           </Form.Item>
-          <p className="muted small">只显示同一数据中心内尚未绑定业务 IP 的设备。</p>
+          <p className="muted small">
+            同
+            IDC、状态允许的设备可选；同一设备同用途只能绑定一个地址，冲突会被拒绝。带外地址不满足装机的业务
+            IP 条件。
+          </p>
         </FormModal>
       )}
     </>

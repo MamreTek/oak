@@ -3,6 +3,7 @@ import { DatabaseOutlined } from '@ant-design/icons';
 import { api } from '../../shared/api/client';
 import { EmptyState, PageHeader, QueryView, useQuery } from '../../shared/ui';
 import { useCallback } from 'react';
+import { LocationManager } from './LocationManager';
 
 export function Facilities() {
   const query = useQuery(
@@ -19,8 +20,9 @@ export function Facilities() {
       <PageHeader
         eyebrow="DATA CENTER RESOURCES"
         title="IDC 资源"
-        description="数据中心、机房与机架层级。当前为演示拓扑，容量随模拟入库更新。"
+        description="管理 IDC、楼栋、机房与机架，并查看设备 U 位占用。所有内容为演示数据。"
       />
+      <LocationManager />
       <QueryView query={query}>
         {({ facilities, servers }) =>
           facilities.length ? (

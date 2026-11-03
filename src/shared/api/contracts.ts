@@ -7,6 +7,28 @@ export interface Rack {
   room: string;
   dataCenterId: string;
   capacity: number;
+  roomId?: string;
+}
+export type LocationKind = 'idc' | 'building' | 'room' | 'rack';
+export interface LocationInput {
+  kind: LocationKind;
+  parentId: string | null;
+  name: string;
+  city?: string;
+  capacity?: number;
+}
+export interface LocationNode extends LocationInput {
+  id: string;
+}
+export interface CredentialInput {
+  name: string;
+  method: 'in-band' | 'out-of-band';
+  protocol: 'ssh' | 'ipmi' | 'redfish';
+  usernameAlias: string;
+}
+export interface CredentialProfile extends CredentialInput {
+  id: string;
+  secretMask: string;
 }
 export interface Facility {
   id: string;
@@ -49,12 +71,17 @@ export interface Address {
   ip: string;
   serverId: string | null;
 }
-export interface IpPool {
-  id: string;
+export interface IpPoolInput {
   name: string;
   cidr: string;
   gateway: string;
   dataCenterId: string;
+  purpose: 'in-band' | 'out-of-band' | 'general';
+}
+export interface IpPool extends IpPoolInput {
+  id: string;
+  addressCount: number;
+  allocatedCount: number;
 }
 export interface Candidate {
   id: string;
@@ -71,6 +98,8 @@ export interface Discovery {
   progress: number;
   candidates: Candidate[];
   createdAt: string;
+  credentialProfileId: string;
+  credential: CredentialProfile;
 }
 export interface ImageInput {
   name: string;
@@ -93,10 +122,25 @@ export interface TemplateInput {
   rootDisk: 'sda' | 'nvme0n1';
   partitionLayout: 'lvm' | 'single';
   timezone: 'UTC' | 'Asia/Shanghai';
+  scriptType?: ScriptType;
+  content?: string;
+}
+export type ScriptType = 'shell' | 'kickstart' | 'python';
+export interface ScriptCheck {
+  valid: boolean;
+  issues: string[];
+  limitation: string;
+}
+export interface TemplateVersionInput {
+  version: string;
+  scriptType: ScriptType;
+  content: string;
 }
 export interface InstallTemplate extends TemplateInput {
   id: string;
   createdAt: string;
+  scriptType: ScriptType;
+  content: string;
 }
 export interface InstallRequest {
   serverId: string;

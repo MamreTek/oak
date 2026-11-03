@@ -59,6 +59,16 @@ export function ParameterSummary({ parameters: p }: { parameters: InstallationPa
             : '未分配 IP',
         },
         { key: 'timezone', label: '系统时区', children: p.template.timezone },
+        {
+          key: 'script',
+          label: '模板脚本快照',
+          children: (
+            <details>
+              <summary>{p.template.scriptType}（仅文本，不执行）</summary>
+              <pre className="plan-preview">{p.template.content}</pre>
+            </details>
+          ),
+        },
       ]}
     />
   );

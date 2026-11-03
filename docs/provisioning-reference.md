@@ -5,7 +5,7 @@
 | 官方依据 | 本期采用的产品概念 | 本期限制 |
 | --- | --- | --- |
 | [CloudBoot 安装流程](https://idcos.github.io/osinstall-doc/platform/系统安装流程.html) | 配置确定后进入任务，分阶段展示引导、介质、安装和交付结果 | 没有 BootOS/Agent、硬件配置或真实 PXE 服务 |
-| [CloudBoot 模块](https://idcos.github.io/osinstall-doc/platform/系统功能模块.html) | 镜像、模板与具体装机任务分别管理 | 镜像仅元数据；模板是有限字段配置，不执行脚本 |
+| [CloudBoot 模块](https://idcos.github.io/osinstall-doc/platform/系统功能模块.html) | 镜像、模板与具体装机任务分别管理 | 镜像仅元数据；模板含配置与独立编写的脚本文本，不执行 |
 | [CloudBoot 进度上报](https://idcos.github.io/osinstall-doc/api/日志进度上报接口.html) | 阶段、进度、错误和日志可查询 | 时间日志为查询驱动 Mock，没有设备回调 |
 | [Cobbler 模板与安装追踪](https://cobbler.readthedocs.io/en/v3.3.7/user-guide.html#autoinstallation) | 复用模板参数、先预览再创建任务，保留结果 | 未实现其 Distro/Profile/System 继承、Snippet、校验器或协议适配 |
 

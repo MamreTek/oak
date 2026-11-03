@@ -1,4 +1,4 @@
-# Oak API 契约 v1.1（原型草案）
+# Oak API 契约 v1.2（原型草案）
 
 本契约用于后续真实后端适配，**不代表接口已经部署**。当前应用通过 `createApi(transport)` 调用 `Request → Response` 的内存 Mock。前端模型见 `src/shared/api/contracts.ts`，处理器见 `src/shared/api/mock.ts`。无外部网络请求或真实设备操作。
 
@@ -19,8 +19,8 @@
 | 方法与路径 | 请求 / 查询 | data 类型与行为 |
 | --- | --- | --- |
 | GET `/dashboard` | 无 | `Dashboard`：总量、可用/装机/告警数、地址占用、最近 4 条任务与模拟告警 |
-| GET `/facilities` | 无 | `Facility[]`，内含机架；小型只读种子集合，不分页 |
-| GET `/ip-pools` | 无 | `IpPool[]`，小型只读种子集合，不分页 |
+| GET `/facilities` | 无 | `Facility[]`，内含机架；位置树兼容投影，不分页 |
+| GET `/ip-pools` | 无 | `IpPool[]`，小型网段集合，含用途与实时合成计数，不分页 |
 | GET `/servers` | 分页；q；status；dataCenterId；sort=assetTag(默认)/name/createdAt/memoryGb | `Page<Server>`；q 匹配名称、资产编号、序列号和型号 |
 | POST `/servers` | `ServerInput` | `Server`，201；验证全部字段后原子创建 |
 | GET `/servers/{id}` | 资源 ID | `Server`，未知 ID 返回 404 |
@@ -30,7 +30,7 @@
 | POST `/discoveries` | `{poolId:string,method:"in-band"|"out-of-band"}` | `Discovery`，201；只允许现有演示资源池 |
 | POST `/discoveries/{id}/import` | `{candidateId:string,assetTag:string,rackId:string,unit:number}` | `Server`，201；完成的发现任务才可导入；同一候选重复导入返回 409 |
 | GET `/addresses` | 分页；poolId；q；status=free/allocated；sort=ip(默认) | `Page<Address>`；查询只读 |
-| POST `/address-allocations` | `{addressId:string,serverId:string}` | `Address`，201；空闲 IP → 同中心可用/维护设备；每设备仅一个业务 IP |
+| POST `/address-allocations` | `{addressId:string,serverId:string}` | `Address`，201；空闲 IP → 同中心可用/维护设备；每设备每用途一个 IP |
 | DELETE `/address-allocations/{addressId}` | 无请求体 | `Address`；serverId 置 null；空闲地址或装机中资源返回 409 |
 | GET `/installations` | 分页；sort=createdAt | `Page<Installation>`，查询时更新模拟进度 |
 | GET `/images` | 分页；q 匹配名称/版本；sort=name(默认)/createdAt | `Page<ImageArtifact>` |
@@ -73,7 +73,7 @@
 
 创建服务器时：资产编号与序列号全局唯一（忽略大小写）；机架必须存在；设备不能越过容量，不能与未退役设备的 U 位重叠。创建默认 ready、off、os=null。发现导入设备默认 2U/128GB，名称、型号和序列号来自该候选，并使用相同服务器校验。
 
-IP 只能绑定同中心设备，已占用地址不能再次分配；已绑定业务 IP 的设备不能再绑定第二个 IP；installing/retired 不允许绑定。装机中禁止回收 IP。回收后可以重新分配。
+IP 只能绑定同中心设备，已占用地址不能再次分配；同一设备同一用途不可再绑定第二个 IP；installing/retired 不允许绑定。装机中禁止回收 IP。回收后可以重新分配。
 
 ## 状态与失败恢复
 
@@ -130,3 +130,35 @@ Content-Type: application/json
 ## 后端接入清单
 
 实现同样端点、JSON 类型和 HTTP 状态；复用行为测试/样例验证契约。把服务端认证、资源隔离、权限、事务和唯一索引、持久任务/超时、审计、凭据保险库及真实设备适配作为必需工作。Mock 的合成监控、simulateFailure 和演示场景不构成正式接口安全设计。只有用户明确授权接入真实后端后，才将 `createApi` 的 transport 替换为经验证的同源 HTTP 适配器；浏览器页面不接收任意生产 URL。
+
+## v1.2 资源与配置管理增量
+
+本节覆盖前文旧的只读位置、每设备单 IP、无脚本文本限制。端点仍使用统一 JSON/UTC/requestId、400/404/409/500 约定，全部为内存 Mock。
+
+| 端点 | 请求 → data | 行为 |
+| --- | --- | --- |
+| GET `/locations` | 无 → LocationNode[] | 完整小型平面集合，parentId 形成四层树 |
+| POST `/locations` | LocationInput → LocationNode，201 | 父子类型、同父级名称唯一 |
+| PATCH `/locations/{id}` | `{name,city?,capacity?}` → LocationNode | 保留 ID，只改属性，不允许改 kind/parentId |
+| DELETE `/locations/{id}` | 无 → LocationNode | 有子级、设备或网段引用时 409 |
+| GET `/credential-profiles` | 无 → CredentialProfile[] | 完整小型虚构元数据集合，无秘密 |
+| POST `/credential-profiles` | CredentialInput → CredentialProfile，201 | 名称忽略大小写唯一，方式与协议匹配 |
+| PATCH `/credential-profiles/{id}` | CredentialInput → CredentialProfile | 被任务引用后不能改变 method，历史快照保留 |
+| DELETE `/credential-profiles/{id}` | 无 → CredentialProfile | 有发现任务引用时 409 |
+| POST `/ip-pools` | IpPoolInput → IpPool，201 | 文档 CIDR、网关、全局不重叠、IDC 引用验证 |
+| PATCH `/ip-pools/{id}` | `{name}` → IpPool | 只允许改名，同 IDC 名称忽略大小写唯一 |
+| DELETE `/ip-pools/{id}` | 无 → IpPool | 有分配或发现任务引用时 409；未引用 IP 随网段移除 |
+| POST `/template-validations` | `{scriptType,content}` → ScriptCheck | 检查不通过仍 200/valid=false；类型无效为 400 |
+| POST `/templates/{id}/versions` | `{version,scriptType,content}` → InstallTemplate，201 | 仅允许这三个字段，复制原配置保存新 ID/版本，不改写旧记录 |
+
+实体与约束：
+
+- LocationInput：`kind:idc/building/room/rack`、`parentId:string|null`、`name:string` 1–64。IDC 父级必须 null，city 必填 1–64；楼栋父级 IDC、机房父级楼栋、机架父级机房。机架 capacity 为 1–42 整数，缩容不能挤占未退役设备。LocationNode 加 id。GET facilities 保留旧 racks 投影，Rack 新增 roomId；改名同步投影。父级、类型不可编辑，不提供跨 IDC 移动。
+- CredentialInput：`name:string` 1–64、`method:in-band/out-of-band`、`protocol:ssh/ipmi/redfish`、`usernameAlias:string`（最多 32，匹配 `demo-[A-Za-z0-9-]+`）。带内仅 SSH，带外仅 IPMI/Redfish。CredentialProfile 加 id 和固定 secretMask=`••••••••`，没有秘密值、显示或解密功能。POST/PATCH 拒绝上述四个字段以外的所有字段，包括 password/token/secret/secretMask；错误和审计不回显请求内容。配置名称与别名仅允许虚构数据；掩码不代表真实秘密存储。
+- Discovery 请求新增可选 credentialProfileId，省略时选择对应方式的种子配置；空场景需显式创建并选择。响应新增 credentialProfileId 和 credential 元数据快照。认证 method 必须匹配；网段用途用于分配，发现仍可选择任一演示网段以兼容旧流程。没有网络扫描或实际认证。
+- IpPoolInput：`name,cidr,gateway,dataCenterId:string`、`purpose:in-band/out-of-band/general`；name 1–64、cidr/gateway 先去两端空白并验证。IpPool 加 id、addressCount、allocatedCount；GET ip-pools 仍为小型数组，计数实时由合成地址计算。CIDR 必须为规范 IPv4 网络地址，前缀 /24–/30，且位于 [RFC 5737](https://www.rfc-editor.org/rfc/rfc5737.html) 三个文档保留 /24 内；网关在网络和广播之间。拒绝跨 IDC/用途的任何范围交集，本期无 VRF。新增网段只展开排除网关后的前 16 个可用地址，不代表完整容量。CIDR/网关/IDC/用途创建后不可变。
+- 分配改为“同设备、同用途最多一个 IP”，不同用途可各一个；同 IDC、状态和地址占用约束保留。装机只读取 purpose=in-band 的业务地址，带外/通用不满足预检；退役需释放所有用途地址。
+- TemplateInput 新增可选 scriptType/content；旧请求默认 shell 和虚构示例。InstallTemplate 返回必含 scriptType/content。类型为 shell/kickstart/python，文本非空、最多 20000 字符、禁止 NUL。Shell 要求 sh/bash shebang；Kickstart 检查 lang 及成对 %packages/%pre/%post/%end；Python 只检查明显错误 shebang 和混合缩进。常见秘密赋值、私钥形式及非锁定 rootpw 被拒绝。新版本仍需名称/版本唯一。
+- ScriptCheck=`{valid:boolean,issues:string[],limitation:string}`。检查不是完整语法、秘密检测、兼容验证或执行沙箱；不要输入生产脚本/真实凭据。文本从不执行，不发送解释器，不作为 HTML 渲染。任务 parameters.template 深拷贝脚本文本，预览 plan 也包含版本文本；编辑只生成新版本，不改变历史任务。
+
+新增错误码：LOCATION_PARENT、LOCATION_CONFLICT、AUTH_CONFLICT、AUTH_METHOD_MISMATCH、SECRET_FIELD_FORBIDDEN、CIDR_INVALID、GATEWAY_INVALID、SUBNET_OVERLAP、POOL_CONFLICT、SCRIPT_INVALID。无效参数 400、未知 ID 404、引用/冲突 409；错误结构及 requestId 保留。刷新仍重置，不构成真实服务端安全保证。

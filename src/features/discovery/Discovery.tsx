@@ -1,8 +1,25 @@
-import { Alert, Button, Card, Form, Input, InputNumber, Progress, Select, Table, Tag } from 'antd';
+import {
+  Alert,
+  Button,
+  Card,
+  Form,
+  Input,
+  InputNumber,
+  Progress,
+  Select,
+  Space,
+  Table,
+  Tag,
+} from 'antd';
 import { RadarChartOutlined } from '@ant-design/icons';
 import { useCallback, useState } from 'react';
-import type { Candidate, Discovery as DiscoveryTask } from '../../shared/api/contracts';
+import type {
+  Candidate,
+  CredentialProfile,
+  Discovery as DiscoveryTask,
+} from '../../shared/api/contracts';
 import { api } from '../../shared/api/client';
+import { CredentialManager } from './CredentialManager';
 import {
   EmptyState,
   FormModal,
@@ -13,9 +30,38 @@ import {
   useQuery,
 } from '../../shared/ui';
 
+function DiscoveryAuthentication({ profiles }: { profiles: CredentialProfile[] }) {
+  const form = Form.useFormInstance();
+  const method = Form.useWatch('method', form);
+  return (
+    <>
+      <Form.Item name="method" label="发现方式" rules={[{ required: true }]}>
+        <Select
+          onChange={() => form.setFieldValue('credentialProfileId', undefined)}
+          options={[
+            { value: 'in-band', label: '带内发现（模拟）' },
+            { value: 'out-of-band', label: '带外发现（模拟 BMC）' },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item name="credentialProfileId" label="虚构认证配置" rules={[{ required: true }]}>
+        <Select
+          options={profiles
+            .filter((profile) => profile.method === method)
+            .map((profile) => ({
+              value: profile.id,
+              label: `${profile.name} · ${profile.protocol.toUpperCase()}`,
+            }))}
+          notFoundContent="请先新增匹配方式的虚构认证配置"
+        />
+      </Form.Item>
+    </>
+  );
+}
 export function Discovery() {
   const [create, setCreate] = useState(false);
   const [page, setPage] = useState(1);
+  const [manageAuth, setManageAuth] = useState(false);
   const [importing, setImporting] = useState<{ task: DiscoveryTask; candidate: Candidate }>();
   const tasks = useQuery(
     useCallback(() => api.discoveries({ page }), [page]),
@@ -27,6 +73,7 @@ export function Discovery() {
         pools: await api.pools(),
         facilities: await api.facilities(),
         servers: (await api.servers({ pageSize: 100 })).items,
+        credentials: await api.credentials(),
       }),
       [],
     ),
@@ -54,9 +101,12 @@ export function Discovery() {
         title="设备发现"
         description="模拟带内 / 带外发现，确认位置后将新设备纳入资产清单。"
         extra={
-          <Button type="primary" icon={<RadarChartOutlined />} onClick={() => setCreate(true)}>
-            新建发现任务
-          </Button>
+          <Space>
+            <Button onClick={() => setManageAuth((value) => !value)}>认证配置</Button>
+            <Button type="primary" icon={<RadarChartOutlined />} onClick={() => setCreate(true)}>
+              新建发现任务
+            </Button>
+          </Space>
         }
       />
       <Alert
@@ -66,6 +116,7 @@ export function Discovery() {
         title="隔离发现演示"
         description="仅使用文档保留网段生成合成设备，不进行网络扫描，也不连接 BMC。发现结果需确认入库。"
       />
+      {manageAuth && <CredentialManager />}
       <Card>
         <QueryView query={tasks}>
           {(data) => (
@@ -102,6 +153,17 @@ export function Discovery() {
                   title: '方式',
                   dataIndex: 'method',
                   render: (method) => (method === 'in-band' ? '带内发现' : '带外发现'),
+                },
+                {
+                  title: '虚构认证',
+                  render: (_, task) => (
+                    <span>
+                      {task.credential.name}
+                      <div className="muted small">
+                        {task.credential.protocol.toUpperCase()} · {task.credential.secretMask}
+                      </div>
+                    </span>
+                  ),
                 },
                 {
                   title: '状态',
@@ -150,15 +212,20 @@ export function Discovery() {
         </QueryView>
       </Card>
       {create && (
-        <FormModal<{ poolId: string; method: DiscoveryTask['method'] }>
+        <FormModal<{ poolId: string; method: DiscoveryTask['method']; credentialProfileId: string }>
           title="新建模拟发现任务"
           open
           onClose={() => setCreate(false)}
           onSubmit={async (values) => {
-            await api.discover(values.poolId, values.method);
+            await api.discover(values.poolId, values.method, values.credentialProfileId);
             setPage(1);
           }}
-          initialValues={{ method: 'out-of-band' }}
+          initialValues={{
+            method: 'out-of-band',
+            credentialProfileId: resources.data?.credentials.find(
+              (profile) => profile.method === 'out-of-band',
+            )?.id,
+          }}
         >
           <Form.Item name="poolId" label="演示网段" rules={[{ required: true }]}>
             <Select
@@ -168,14 +235,7 @@ export function Discovery() {
               }))}
             />
           </Form.Item>
-          <Form.Item name="method" label="发现方式" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'in-band', label: '带内发现（模拟）' },
-                { value: 'out-of-band', label: '带外发现（模拟 BMC）' },
-              ]}
-            />
-          </Form.Item>
+          <DiscoveryAuthentication profiles={resources.data?.credentials ?? []} />
         </FormModal>
       )}
       {importing && (

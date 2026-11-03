@@ -22,6 +22,8 @@ import type {
   TemplateInput,
 } from '../../shared/api/contracts';
 import { EmptyState, FormModal, PageHeader, QueryView, useQuery } from '../../shared/ui';
+import { ScriptEditor, ScriptFields } from './ScriptEditor';
+import { demoScripts } from '../../shared/api/configuration-rules';
 
 export function Artifacts() {
   const [q, setQ] = useState('');
@@ -29,6 +31,7 @@ export function Artifacts() {
   const [templatePage, setTemplatePage] = useState(1);
   const [create, setCreate] = useState<'image' | 'template'>();
   const [detail, setDetail] = useState<ImageArtifact | InstallTemplate>();
+  const [scriptTemplate, setScriptTemplate] = useState<InstallTemplate>();
   const images = useQuery(useCallback(() => api.images({ q, page: imagePage }), [q, imagePage]));
   const templates = useQuery(
     useCallback(() => api.templates({ q, page: templatePage }), [q, templatePage]),
@@ -45,7 +48,7 @@ export function Artifacts() {
         className="page-note"
         type="info"
         showIcon
-        title="仅保存演示元数据"
+        title="仅演示镜像与模板配置"
         description="不上传或下载镜像，不执行模板。SHA-256 为声明值，未校验真实文件；“就绪”仅表示演示记录可选。记录创建后保持不变，变更配置请创建新版本。"
       />
       <Card>
@@ -200,9 +203,14 @@ export function Artifacts() {
                           {
                             title: '操作',
                             render: (_, template) => (
-                              <Button type="link" onClick={() => setDetail(template)}>
-                                模板详情
-                              </Button>
+                              <Space>
+                                <Button type="link" onClick={() => setDetail(template)}>
+                                  模板详情
+                                </Button>
+                                <Button type="link" onClick={() => setScriptTemplate(template)}>
+                                  编辑脚本
+                                </Button>
+                              </Space>
                             ),
                           },
                         ]}
@@ -295,6 +303,8 @@ export function Artifacts() {
             rootDisk: 'sda',
             partitionLayout: 'lvm',
             timezone: 'UTC',
+            scriptType: 'shell',
+            content: demoScripts.shell,
           }}
         >
           <Form.Item
@@ -354,6 +364,7 @@ export function Artifacts() {
               ]}
             />
           </Form.Item>
+          <ScriptFields />
         </FormModal>
       )}
       <Drawer
@@ -361,6 +372,12 @@ export function Artifacts() {
         open={!!detail}
         onClose={() => setDetail(undefined)}
       >
+        {detail && !('checksum' in detail) && (
+          <>
+            <Alert type="info" title={`${detail.scriptType} · 只读版本内容（不会执行）`} />
+            <pre className="plan-preview">{detail.content}</pre>
+          </>
+        )}
         {detail && (
           <Descriptions
             column={1}
@@ -401,6 +418,13 @@ export function Artifacts() {
           />
         )}
       </Drawer>
+      {scriptTemplate && (
+        <ScriptEditor
+          template={scriptTemplate}
+          onClose={() => setScriptTemplate(undefined)}
+          onSaved={() => setTemplatePage(1)}
+        />
+      )}
     </>
   );
 }

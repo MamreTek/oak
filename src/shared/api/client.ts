@@ -21,6 +21,14 @@ import type {
   ServerInput,
   ServerStatus,
   Transport,
+  LocationInput,
+  LocationNode,
+  CredentialInput,
+  CredentialProfile,
+  IpPoolInput,
+  ScriptCheck,
+  ScriptType,
+  TemplateVersionInput,
 } from './contracts';
 import { mockService } from './mock';
 
@@ -69,6 +77,25 @@ export function createApi(transport: Transport) {
     }
   }
   return {
+    locations: () => request<LocationNode[]>('/locations'),
+    createLocation: (input: LocationInput) => request<LocationNode>('/locations', 'POST', input),
+    editLocation: (id: string, input: { name: string; city?: string; capacity?: number }) =>
+      request<LocationNode>(`/locations/${id}`, 'PATCH', input),
+    deleteLocation: (id: string) => request<LocationNode>(`/locations/${id}`, 'DELETE'),
+    credentials: () => request<CredentialProfile[]>('/credential-profiles'),
+    createCredential: (input: CredentialInput) =>
+      request<CredentialProfile>('/credential-profiles', 'POST', input),
+    editCredential: (id: string, input: CredentialInput) =>
+      request<CredentialProfile>(`/credential-profiles/${id}`, 'PATCH', input),
+    deleteCredential: (id: string) =>
+      request<CredentialProfile>(`/credential-profiles/${id}`, 'DELETE'),
+    createPool: (input: IpPoolInput) => request<IpPool>('/ip-pools', 'POST', input),
+    renamePool: (id: string, name: string) => request<IpPool>(`/ip-pools/${id}`, 'PATCH', { name }),
+    deletePool: (id: string) => request<IpPool>(`/ip-pools/${id}`, 'DELETE'),
+    checkScript: (scriptType: ScriptType, content: string) =>
+      request<ScriptCheck>('/template-validations', 'POST', { scriptType, content }),
+    versionTemplate: (id: string, input: TemplateVersionInput) =>
+      request<InstallTemplate>(`/templates/${id}/versions`, 'POST', input),
     dashboard: () => request<Dashboard>('/dashboard'),
     facilities: () => request<Facility[]>('/facilities'),
     pools: () => request<IpPool[]>('/ip-pools'),
@@ -85,8 +112,8 @@ export function createApi(transport: Transport) {
         order: 'desc',
         ...query,
       }),
-    discover: (poolId: string, method: Discovery['method']) =>
-      request<Discovery>('/discoveries', 'POST', { poolId, method }),
+    discover: (poolId: string, method: Discovery['method'], credentialProfileId?: string) =>
+      request<Discovery>('/discoveries', 'POST', { poolId, method, credentialProfileId }),
     importCandidate: (
       id: string,
       input: { candidateId: string; rackId: string; unit: number; assetTag: string },
