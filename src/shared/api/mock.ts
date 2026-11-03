@@ -23,6 +23,11 @@ import type {
   CredentialInput,
   CredentialProfile,
   IpPoolInput,
+  Idc,
+  Building,
+  Room,
+  RackResource,
+  LocationKind,
 } from './contracts';
 import { updateInstallationProgress } from './installation-progress';
 import { checkScript, demoScripts, ipv4Number, ipv4Text, subnetRange } from './configuration-rules';
@@ -78,7 +83,10 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
   let installations: Installation[] = [];
   let images: ImageArtifact[] = [];
   let templates: InstallTemplate[] = [];
-  let locations: LocationNode[] = [];
+  let idcs: Idc[] = [];
+  let buildings: Building[] = [];
+  let rooms: Room[] = [];
+  let rackRecords: RackResource[] = [];
   let credentials: CredentialProfile[] = [];
   let events: AuditEvent[] = [];
   const id = (prefix: string) => `${prefix}-${++sequence}`;
@@ -252,23 +260,25 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
         serverId: i < (p ? 3 : 6) ? `srv-${p ? i + 9 : i + 1}` : null,
       })),
     );
-    locations = facilities.flatMap((dc) => [
-      { id: dc.id, kind: 'idc' as const, parentId: null, name: dc.name, city: dc.city },
-      { id: `building-${dc.id}`, kind: 'building' as const, parentId: dc.id, name: '演示楼栋' },
-      {
-        id: `room-${dc.id}`,
-        kind: 'room' as const,
-        parentId: `building-${dc.id}`,
-        name: dc.racks[0]?.room ?? '演示机房',
-      },
-      ...dc.racks.map((rack) => ({
-        id: rack.id,
-        kind: 'rack' as const,
-        parentId: `room-${dc.id}`,
-        name: rack.name,
-        capacity: rack.capacity,
-      })),
-    ]);
+    setLocationNodes(
+      facilities.flatMap((dc) => [
+        { id: dc.id, kind: 'idc' as const, parentId: null, name: dc.name, city: dc.city },
+        { id: `building-${dc.id}`, kind: 'building' as const, parentId: dc.id, name: '演示楼栋' },
+        {
+          id: `room-${dc.id}`,
+          kind: 'room' as const,
+          parentId: `building-${dc.id}`,
+          name: dc.racks[0]?.room ?? '演示机房',
+        },
+        ...dc.racks.map((rack) => ({
+          id: rack.id,
+          kind: 'rack' as const,
+          parentId: `room-${dc.id}`,
+          name: rack.name,
+          capacity: rack.capacity,
+        })),
+      ]),
+    );
     credentials =
       next === 'empty'
         ? []
@@ -295,10 +305,102 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
   }
   function getLocation(locationId: string) {
     return (
-      locations.find((entry) => entry.id === locationId) ?? fail(404, 'NOT_FOUND', '位置不存在')
+      locationNodes().find((entry) => entry.id === locationId) ??
+      fail(404, 'NOT_FOUND', '位置不存在')
     );
   }
+  // Four canonical in-memory collections mirror the four proposed database tables.
+  // Legacy tree/facilities views are derived, never a fifth canonical collection.
+  function locationNodes(): LocationNode[] {
+    return [
+      ...idcs.map((entry) => ({ ...entry, kind: 'idc' as const, parentId: null })),
+      ...buildings.map(({ id, name, idcId }) => ({
+        id,
+        name,
+        kind: 'building' as const,
+        parentId: idcId,
+      })),
+      ...rooms.map(({ id, name, buildingId }) => ({
+        id,
+        name,
+        kind: 'room' as const,
+        parentId: buildingId,
+      })),
+      ...rackRecords.map(({ id, name, roomId, capacity }) => ({
+        id,
+        name,
+        capacity,
+        kind: 'rack' as const,
+        parentId: roomId,
+      })),
+    ];
+  }
+  function setLocationNodes(nodes: LocationNode[]) {
+    idcs = nodes
+      .filter((node) => node.kind === 'idc')
+      .map(({ id, name, city }) => ({ id, name, city: city! }));
+    buildings = nodes
+      .filter((node) => node.kind === 'building')
+      .map(({ id, name, parentId }) => ({ id, name, idcId: parentId! }));
+    rooms = nodes
+      .filter((node) => node.kind === 'room')
+      .map(({ id, name, parentId }) => ({ id, name, buildingId: parentId! }));
+    rackRecords = nodes
+      .filter((node) => node.kind === 'rack')
+      .map(({ id, name, parentId, capacity }) => ({
+        id,
+        name,
+        roomId: parentId!,
+        capacity: capacity!,
+      }));
+  }
+  const parentFields = {
+    idc: null,
+    building: 'idcId',
+    room: 'buildingId',
+    rack: 'roomId',
+  } as const;
+  const resourceKinds: Record<string, LocationKind> = {
+    idcs: 'idc',
+    buildings: 'building',
+    rooms: 'room',
+    racks: 'rack',
+  };
+  function resourceRows(kind: LocationKind) {
+    switch (kind) {
+      case 'idc':
+        return idcs;
+      case 'building':
+        return buildings;
+      case 'room':
+        return rooms;
+      case 'rack':
+        return rackRecords;
+    }
+  }
+  function saveLocation(input: LocationInput, previous?: LocationNode) {
+    const result = { ...input, id: previous?.id ?? id(input.kind) };
+    const nodes = locationNodes();
+    setLocationNodes(
+      previous
+        ? nodes.map((entry) => (entry.id === previous.id ? result : entry))
+        : [...nodes, result],
+    );
+    syncFacilities();
+    return result;
+  }
+  function deleteLocation(entry: LocationNode) {
+    if (
+      locationNodes().some((item) => item.parentId === entry.id) ||
+      servers.some((server) => server.rackId === entry.id) ||
+      pools.some((pool) => pool.dataCenterId === entry.id)
+    )
+      fail(409, 'RESOURCE_IN_USE', '资源仍有子级、设备或网段引用');
+    setLocationNodes(locationNodes().filter((item) => item.id !== entry.id));
+    syncFacilities();
+  }
   function syncFacilities() {
+    const locations = locationNodes();
     facilities = locations
       .filter((entry) => entry.kind === 'idc')
       .map((dc) => ({
@@ -342,7 +444,7 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
     )
       fail(400, 'LOCATION_PARENT', '父级类型不正确');
     if (
-      locations.some(
+      locationNodes().some(
         (entry) =>
           entry.id !== previous?.id &&
           entry.parentId === parentId &&
@@ -351,9 +453,15 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
     )
       fail(409, 'LOCATION_CONFLICT', '同父级名称已存在');
     const result: LocationInput = { kind, parentId, name };
-    if (kind === 'idc') result.city = required(body.city ?? previous?.city, 'city');
+    if (kind === 'idc')
+      result.city = required(body.city !== undefined ? body.city : previous?.city, 'city');
     if (kind === 'rack') {
-      result.capacity = integer(body.capacity ?? previous?.capacity, 'capacity', 1, 42);
+      result.capacity = integer(
+        body.capacity !== undefined ? body.capacity : previous?.capacity,
+        'capacity',
+        1,
+        42,
+      );
       if (
         servers.some(
           (server) =>
@@ -763,31 +871,68 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
       let status = 200;
       if (method === 'GET' && path === '/facilities') data = facilities;
       else if (method === 'GET' && path === '/ip-pools') data = pools.map(poolView);
-      else if (method === 'GET' && path === '/locations') data = locations;
+      else if (Object.hasOwn(resourceKinds, path.split('/')[1])) {
+        const parts = path.split('/').slice(1);
+        const kind = resourceKinds[parts[0]];
+        if (parts.length > 2) fail(404, 'NOT_FOUND', '接口不存在');
+        const previous = parts[1] ? getLocation(parts[1]) : undefined;
+        if (previous && previous.kind !== kind) fail(404, 'NOT_FOUND', '资源不存在');
+        const parentField = parentFields[kind];
+        if (method === 'GET' && !previous) {
+          const q = (params.get('q') ?? '').toLowerCase();
+          const parent = parentField ? params.get(parentField) : null;
+          const rows = resourceRows(kind).filter(
+            (entry) =>
+              entry.name.toLowerCase().includes(q) &&
+              (!parent ||
+                (parentField === 'idcId' && 'idcId' in entry && entry.idcId === parent) ||
+                (parentField === 'buildingId' &&
+                  'buildingId' in entry &&
+                  entry.buildingId === parent) ||
+                (parentField === 'roomId' && 'roomId' in entry && entry.roomId === parent)),
+          );
+          data = paginate(rows, params, ['name'], 'name');
+        } else if (method === 'GET' && previous) {
+          data = resourceRows(kind).find((entry) => entry.id === previous.id);
+        } else if ((method === 'POST' && !previous) || (method === 'PATCH' && previous)) {
+          const allowed = [
+            'name',
+            ...(kind === 'idc' ? ['city'] : []),
+            ...(kind === 'rack' ? ['capacity'] : []),
+            ...(!previous && parentField ? [parentField] : []),
+          ];
+          if (Object.keys(body).some((key) => !allowed.includes(key)))
+            fail(400, 'VALIDATION_ERROR', '仅允许该资源的可编辑字段，父级不可修改');
+          const input = validateLocation(
+            {
+              ...body,
+              ...(!previous ? { kind, parentId: parentField ? body[parentField] : null } : {}),
+            },
+            previous,
+          );
+          const result = saveLocation(input, previous);
+          data = resourceRows(kind).find((entry) => entry.id === result.id);
+          status = previous ? 200 : 201;
+          audit(previous ? '编辑资源' : '新增资源', result.id, requestId);
+        } else if (method === 'DELETE' && previous) {
+          data = resourceRows(kind).find((entry) => entry.id === previous.id);
+          deleteLocation(previous);
+          audit('删除资源', previous.id, requestId);
+        } else fail(404, 'NOT_FOUND', '接口不存在');
+      } else if (method === 'GET' && path === '/locations') data = locationNodes();
       else if (
         (method === 'POST' && path === '/locations') ||
         (method === 'PATCH' && /^\/locations\/[^/]+$/.test(path))
       ) {
         const previous = method === 'PATCH' ? getLocation(path.split('/')[2]) : undefined;
         const input = validateLocation(body, previous);
-        const result = { ...input, id: previous?.id ?? id('loc') };
-        if (previous)
-          locations = locations.map((entry) => (entry.id === previous.id ? result : entry));
-        else locations.push(result);
-        syncFacilities();
+        const result = saveLocation(input, previous);
         data = result;
         status = previous ? 200 : 201;
         audit(previous ? '编辑位置' : '新增位置', result.id, requestId);
       } else if (method === 'DELETE' && /^\/locations\/[^/]+$/.test(path)) {
         const entry = getLocation(path.split('/')[2]);
-        if (
-          locations.some((item) => item.parentId === entry.id) ||
-          servers.some((server) => server.rackId === entry.id) ||
-          pools.some((pool) => pool.dataCenterId === entry.id)
-        )
-          fail(409, 'RESOURCE_IN_USE', '位置仍有子级、设备或网段引用');
-        locations = locations.filter((item) => item.id !== entry.id);
-        syncFacilities();
+        deleteLocation(entry);
         data = entry;
         audit('删除位置', entry.id, requestId);
       } else if (method === 'GET' && path === '/credential-profiles') data = credentials;

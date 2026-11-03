@@ -10,36 +10,88 @@ describe('Resource management screens', () => {
     configure({ asyncUtilTimeout: 5000 });
     mockService.reset();
   });
-  it('creates the four-level hierarchy through parent-specific actions', async () => {
+  it('uses four independent menus to create, edit, inspect and delete resources', async () => {
     window.history.replaceState({}, '', '/facilities');
     const user = userEvent.setup();
     render(<App />);
+    await screen.findByRole('heading', { name: 'IDC管理' });
+    expect(window.location.pathname).toBe('/idcs');
+    await waitFor(() => expect(screen.getByRole('button', { name: '新增 IDC' })).toBeEnabled());
     await user.click(screen.getByRole('button', { name: '新增 IDC' }));
-    async function save(name: string, city?: string) {
+    async function save(label: string, name: string, parent?: [string, string], city?: string) {
       const dialog = await screen.findByRole('dialog');
-      await user.click(within(dialog).getByLabelText('位置名称'));
+      await user.click(within(dialog).getByLabelText(`${label}名称`));
+      await user.clear(within(dialog).getByLabelText(`${label}名称`));
       await user.paste(name);
       if (city) {
         await user.click(within(dialog).getByLabelText('城市（虚构数据）'));
         await user.paste(city);
       }
+      if (parent) {
+        await user.click(within(dialog).getByLabelText(`所属${parent[0]}`));
+        await user.click(
+          await screen.findByText(parent[1], { selector: '.ant-select-item-option-content' }),
+        );
+      }
       await user.click(within(dialog).getByRole('button', { name: '确 认' }));
       await waitFor(() => expect(dialog).not.toBeInTheDocument());
     }
-    await save('Demo IDC', 'Demo City');
-    let row = await screen.findByRole('row', { name: /Demo IDC/ });
-    await user.click(within(row).getByRole('button', { name: '新增楼栋' }));
-    await save('Demo Building');
-    row = await screen.findByRole('row', { name: /Demo Building/ });
-    await user.click(within(row).getByRole('button', { name: '新增机房' }));
-    await save('Demo Room');
-    row = await screen.findByRole('row', { name: /Demo Room/ });
-    await user.click(within(row).getByRole('button', { name: '新增机架' }));
-    await save('Demo Rack');
-    expect(await screen.findByRole('row', { name: /Demo Rack/ })).toBeInTheDocument();
+    await save('IDC', 'Demo IDC', undefined, 'Demo City');
+    for (const [label, name, parentLabel, path] of [
+      ['楼栋', 'Demo Building', 'IDC', 'Demo IDC'],
+      ['机房', 'Demo Room', '楼栋', 'Demo IDC / Demo Building'],
+      ['机架', 'Demo Rack', '机房', 'Demo IDC / Demo Building / Demo Room'],
+    ]) {
+      await user.click(screen.getByRole('menuitem', { name: `apartment ${label}管理` }));
+      await screen.findByRole('heading', { name: `${label}管理` });
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: `新增${label}` })).toBeEnabled(),
+      );
+      await user.click(screen.getByRole('button', { name: `新增${label}` }));
+      await save(label, name, [parentLabel, path]);
+      await screen.findByRole('row', { name: new RegExp(name) });
+    }
+    let row = await screen.findByRole('row', { name: /Demo Rack/ });
+    await user.click(within(row).getByRole('button', { name: '编辑' }));
+    await save('机架', 'Demo Rack Edited');
+    row = await screen.findByRole('row', { name: /Demo Rack Edited/ });
+    await user.click(within(row).getByRole('button', { name: '详情' }));
+    const detail = await screen.findByRole('dialog');
+    expect(
+      within(detail).getByText('Demo IDC / Demo Building / Demo Room / Demo Rack Edited'),
+    ).toBeInTheDocument();
+    expect(await within(detail).findByText('0 台设备 · 0 / 42 U')).toBeInTheDocument();
+    await user.click(within(detail).getByRole('button', { name: '关闭' }));
+    await waitFor(() => expect(detail).not.toBeInTheDocument());
     const dc = (await api.facilities()).find((entry) => entry.name === 'Demo IDC')!;
-    expect(dc.racks[0]).toMatchObject({ name: 'Demo Rack', room: 'Demo Room' });
+    expect(dc.racks[0]).toMatchObject({ name: 'Demo Rack Edited', room: 'Demo Room' });
+    await user.click(within(row).getByRole('button', { name: '删除' }));
+    const deletion = await screen.findByRole('dialog');
+    await user.click(within(deletion).getByRole('button', { name: '确认模拟操作' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('row', { name: /Demo Rack Edited/ })).not.toBeInTheDocument(),
+    );
   }, 90000);
+  it('explains missing parents and recovers a resource page from service failure', async () => {
+    mockService.reset('empty');
+    window.history.replaceState({}, '', '/buildings');
+    const user = userEvent.setup();
+    render(<App />);
+    expect(await screen.findByText('请先在IDC管理中创建父级资源。')).toBeInTheDocument();
+    expect(screen.getByText('暂无楼栋，可新增资源或调整查询条件。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新增楼栋' })).toBeDisabled();
+    await user.click(screen.getByRole('combobox', { name: '演示场景' }));
+    await user.click(
+      await screen.findByText('服务失败场景', { selector: '.ant-select-item-option-content' }),
+    );
+    await screen.findByText('资源加载失败');
+    await user.click(screen.getByRole('combobox', { name: '演示场景' }));
+    await user.click(
+      await screen.findByText('正常场景', { selector: '.ant-select-item-option-content' }),
+    );
+    expect(await screen.findByRole('row', { name: /building-dc-east/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '新增楼栋' })).toBeEnabled();
+  }, 30000);
   it('creates a subnet and allocates an out-of-band address at the second level', async () => {
     window.history.replaceState({}, '', '/network');
     const user = userEvent.setup();

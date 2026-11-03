@@ -1,4 +1,4 @@
-# Oak API 契约 v1.2（原型草案）
+# Oak API 契约 v1.3（原型草案）
 
 本契约用于后续真实后端适配，**不代表接口已经部署**。当前应用通过 `createApi(transport)` 调用 `Request → Response` 的内存 Mock。前端模型见 `src/shared/api/contracts.ts`，处理器见 `src/shared/api/mock.ts`。无外部网络请求或真实设备操作。
 
@@ -131,7 +131,31 @@ Content-Type: application/json
 
 实现同样端点、JSON 类型和 HTTP 状态；复用行为测试/样例验证契约。把服务端认证、资源隔离、权限、事务和唯一索引、持久任务/超时、审计、凭据保险库及真实设备适配作为必需工作。Mock 的合成监控、simulateFailure 和演示场景不构成正式接口安全设计。只有用户明确授权接入真实后端后，才将 `createApi` 的 transport 替换为经验证的同源 HTTP 适配器；浏览器页面不接收任意生产 URL。
 
-## v1.2 资源与配置管理增量
+## v1.3 四类独立资源
+
+IDC、楼栋、机房、机架分别对应独立菜单、DTO、REST 资源及 Mock 集合。四张独立表的逻辑模型见 [数据库设计草案](database-design.md)；**当前未建表、无数据库或持久化**。以下路径均相对于 `/api/v1`。
+
+| 资源路径     | 创建 JSON（POST）                             | 成功响应实体（创建 201）      | 列表父级筛选 |
+| ------------ | --------------------------------------------- | ----------------------------- | ------------ |
+| `/idcs`      | `{name:string,city:string}`                   | `Idc`：输入字段加 id          | 无           |
+| `/buildings` | `{name:string,idcId:string}`                  | `Building`：输入字段加 id     | `idcId`      |
+| `/rooms`     | `{name:string,buildingId:string}`             | `Room`：输入字段加 id         | `buildingId` |
+| `/racks`     | `{name:string,roomId:string,capacity:number}` | `RackResource`：输入字段加 id | `roomId`     |
+
+四种资源均支持：
+
+- GET 集合：`Page<T>`，通用 page/pageSize，q 仅匹配名称且忽略大小写，sort 仅支持 name（默认 name），order 默认 asc；父级筛选为直接父键精确匹配，与 q 用 AND。筛选到不存在的父键返回空列表。
+- GET `/{id}`：单个实体。ID 不存在或属于其他资源类型时返回 404。
+- PATCH `/{id}`：必须提供 name，IDC 可另提供 city、机架可另提供 capacity；省略 city/capacity 时保留原值。其他属性、类型或父级字段一律 400，不支持移动父级。
+- DELETE `/{id}`：返回已删除实体；有子级、设备（含退役设备）或网段引用时 409 `RESOURCE_IN_USE`，无部分删除。
+
+名称去首尾空白后 1–64 字符；IDC city 必填 1–64 字符。IDC 名称全局忽略大小写唯一，其他类型在同一直接父级内忽略大小写唯一；冲突 409 `LOCATION_CONFLICT`。父级 ID 必填，缺失 400、引用不存在 404、类型错误 400 `LOCATION_PARENT`。机架容量整数 1–42；缩容挤占未退役设备的 U 位返回 409 `RESOURCE_IN_USE`。额外创建字段返回 400。单次请求完整校验后更新四个集合和派生视图。
+
+例：POST `/buildings` `{ "name":"Demo Building", "idcId":"dc-east" }` → 201 `{ "data":{ "id":"building-123", "name":"Demo Building", "idcId":"dc-east" }, "requestId":"req-122" }`。GET `/buildings?idcId=dc-east&q=demo&page=1&pageSize=10&sort=name&order=asc` → `Page<Building>`；ID 为示意值。
+
+`GET /locations` 是完整小型层级兼容投影，供完整路径和父级选择使用；`GET /facilities` 是旧 IDC/机架兼容投影。旧 locations 写端点仍可用，通过相同校验更新四个集合，不保存第五份位置记录。ID 不变，改名同步旧视图，资产/发现/IP/装机引用不受菜单拆分影响。旧前端 `/facilities` 页面重定向 `/idcs`。
+
+## v1.2 资源与配置管理增量（保留兼容）
 
 本节覆盖前文旧的只读位置、每设备单 IP、无脚本文本限制。端点仍使用统一 JSON/UTC/requestId、400/404/409/500 约定，全部为内存 Mock。
 

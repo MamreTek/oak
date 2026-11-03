@@ -10,6 +10,47 @@ export interface Rack {
   roomId?: string;
 }
 export type LocationKind = 'idc' | 'building' | 'room' | 'rack';
+export interface IdcInput {
+  name: string;
+  city: string;
+}
+export interface Idc extends IdcInput {
+  id: string;
+}
+export interface BuildingInput {
+  name: string;
+  idcId: string;
+}
+export interface Building extends BuildingInput {
+  id: string;
+}
+export interface RoomInput {
+  name: string;
+  buildingId: string;
+}
+export interface Room extends RoomInput {
+  id: string;
+}
+export interface RackInput {
+  name: string;
+  roomId: string;
+  capacity: number;
+}
+export interface RackResource extends RackInput {
+  id: string;
+}
+export interface ResourceMap {
+  idc: Idc;
+  building: Building;
+  room: Room;
+  rack: RackResource;
+}
+export interface ResourceInputMap {
+  idc: IdcInput;
+  building: BuildingInput;
+  room: RoomInput;
+  rack: RackInput;
+}
 export interface LocationInput {
   kind: LocationKind;
   parentId: string | null;
@@ -247,4 +288,7 @@ export interface ListQuery {
   status?: string;
   dataCenterId?: string;
   poolId?: string;
+  idcId?: string;
+  buildingId?: string;
+  roomId?: string;
 }

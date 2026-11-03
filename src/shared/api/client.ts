@@ -29,6 +29,9 @@ import type {
   ScriptCheck,
   ScriptType,
   TemplateVersionInput,
+  ResourceMap,
+  ResourceInputMap,
+  LocationKind,
 } from './contracts';
 import { mockService } from './mock';
 
@@ -77,6 +80,20 @@ export function createApi(transport: Transport) {
     }
   }
   return {
+    // Independent resources; /locations remains a compatibility projection.
+    resources: <K extends LocationKind>(kind: K, query?: ListQuery) =>
+      request<Page<ResourceMap[K]>>(`/${resourcePaths[kind]}`, 'GET', undefined, query),
+    resource: <K extends LocationKind>(kind: K, id: string) =>
+      request<ResourceMap[K]>(`/${resourcePaths[kind]}/${id}`),
+    createResource: <K extends LocationKind>(kind: K, input: ResourceInputMap[K]) =>
+      request<ResourceMap[K]>(`/${resourcePaths[kind]}`, 'POST', input),
+    editResource: <K extends LocationKind>(
+      kind: K,
+      id: string,
+      input: { name: string; city?: string; capacity?: number },
+    ) => request<ResourceMap[K]>(`/${resourcePaths[kind]}/${id}`, 'PATCH', input),
+    deleteResource: <K extends LocationKind>(kind: K, id: string) =>
+      request<ResourceMap[K]>(`/${resourcePaths[kind]}/${id}`, 'DELETE'),
     locations: () => request<LocationNode[]>('/locations'),
     createLocation: (input: LocationInput) => request<LocationNode>('/locations', 'POST', input),
     editLocation: (id: string, input: { name: string; city?: string; capacity?: number }) =>
@@ -148,6 +165,12 @@ export function createApi(transport: Transport) {
       }),
   };
 }
+export const resourcePaths: Record<LocationKind, string> = {
+  idc: 'idcs',
+  building: 'buildings',
+  room: 'rooms',
+  rack: 'racks',
+};
 // The prototype always uses its isolated Mock. A future backend integrates by
 // injecting a transport with an explicitly reviewed base URL; no production URL input exists here.
 export const api = createApi(mockService.transport);

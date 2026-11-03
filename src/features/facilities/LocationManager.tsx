@@ -1,8 +1,35 @@
-import { Alert, Button, Card, Form, Input, InputNumber, Space, Table, Tag } from 'antd';
+import {
+  Alert,
+  Button,
+  Card,
+  Descriptions,
+  Drawer,
+  Form,
+  Input,
+  InputNumber,
+  Select,
+  Space,
+  Table,
+} from 'antd';
+import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useCallback, useState } from 'react';
 import { api } from '../../shared/api/client';
-import type { LocationInput, LocationKind, LocationNode } from '../../shared/api/contracts';
-import { FormModal, QueryView, useConfirmedAction, useQuery } from '../../shared/ui';
+import type {
+  ListQuery,
+  LocationKind,
+  LocationNode,
+  ResourceInputMap,
+  ResourceMap,
+} from '../../shared/api/contracts';
+import {
+  EmptyState,
+  FormModal,
+  PageHeader,
+  QueryView,
+  useConfirmedAction,
+  useQuery,
+} from '../../shared/ui';
+import { RackOccupancy } from './Facilities';
 
 export const locationLabels: Record<LocationKind, string> = {
   idc: 'IDC',
@@ -10,135 +37,285 @@ export const locationLabels: Record<LocationKind, string> = {
   room: '机房',
   rack: '机架',
 };
-export function LocationManager() {
-  const query = useQuery(useCallback(() => api.locations(), []));
-  const [editing, setEditing] = useState<{
-    kind: LocationKind;
-    parentId: string | null;
-    node?: LocationNode;
-  }>();
+const parentKinds: Partial<Record<LocationKind, LocationKind>> = {
+  building: 'idc',
+  room: 'building',
+  rack: 'room',
+};
+const parentFields = { idc: null, building: 'idcId', room: 'buildingId', rack: 'roomId' } as const;
+type Resource = ResourceMap[LocationKind];
+type Fields = {
+  name: string;
+  city?: string;
+  capacity?: number;
+  idcId?: string;
+  buildingId?: string;
+  roomId?: string;
+};
+
+function pathText(id: string | null, nodes: LocationNode[]): string {
+  if (!id) return '—';
+  const node = nodes.find((entry) => entry.id === id);
+  if (!node) return '父级不可用';
+  return node.parentId ? `${pathText(node.parentId, nodes)} / ${node.name}` : node.name;
+}
+
+export function LocationManager({ kind }: { kind: LocationKind }) {
+  const label = locationLabels[kind];
+  const parentKind = parentKinds[kind];
+  const parentField = parentFields[kind];
+  const [query, setQuery] = useState<ListQuery>({
+    page: 1,
+    pageSize: 10,
+    sort: 'name',
+    order: 'asc',
+  });
+  const [filters] = Form.useForm<ListQuery>();
+  const [editing, setEditing] = useState<{ resource?: Resource }>();
+  const [detailId, setDetailId] = useState<string>();
   const confirm = useConfirmedAction();
-  type Row = LocationNode & { children?: Row[] };
-  const tree = (nodes: LocationNode[], parentId: string | null): Row[] =>
-    nodes
-      .filter((node) => node.parentId === parentId)
-      .map((node) => {
-        const children = tree(nodes, node.id);
-        return { ...node, ...(children.length ? { children } : {}) };
-      });
-  const childKind: Partial<Record<LocationKind, LocationKind>> = {
-    idc: 'building',
-    building: 'room',
-    room: 'rack',
+  const resources = useQuery(
+    useCallback(
+      async () => ({
+        page: await api.resources(kind, query),
+        nodes: await api.locations(),
+      }),
+      [kind, query],
+    ),
+  );
+  const nodes = resources.data?.nodes ?? [];
+  const parentOptions = nodes
+    .filter((node) => node.kind === parentKind)
+    .map((node) => ({
+      value: node.id,
+      label: pathText(node.id, nodes),
+    }));
+  const detail = nodes.find((node) => node.id === detailId && node.kind === kind);
+  const update = (values: Partial<ListQuery>) =>
+    setQuery((old) => ({ ...old, ...values, page: values.page ?? 1 }));
+  const resetFilters = () => {
+    filters.resetFields();
+    setQuery({ page: 1, pageSize: query.pageSize, sort: 'name', order: 'asc' });
   };
   return (
-    <Card
-      className="query-card"
-      title="资源层级管理"
-      extra={
-        <Button type="primary" onClick={() => setEditing({ kind: 'idc', parentId: null })}>
-          新增 IDC
-        </Button>
-      }
-    >
-      <Alert
-        type="info"
-        showIcon
-        className="page-note"
-        title="IDC → 楼栋 → 机房 → 机架"
-        description="仅合成位置数据。父级创建后不可移动；有子级、设备或网段引用时不可删除，机架缩容不能挤占已有 U 位。"
+    <>
+      <PageHeader
+        title={`${label}管理`}
+        description={
+          kind === 'idc'
+            ? '管理数据中心及城市，楼栋、机房、机架分别在各自菜单维护。'
+            : `独立维护${label}及其所属${locationLabels[parentKind!]}，父级创建后不可移动。`
+        }
       />
-      <QueryView query={query}>
-        {(nodes) => (
-          <Table<Row>
-            rowKey="id"
-            size="middle"
-            scroll={{ x: 820 }}
-            pagination={false}
-            dataSource={tree(nodes, null)}
-            expandable={{ defaultExpandAllRows: true }}
-            columns={[
-              { title: '名称', dataIndex: 'name', width: 270 },
-              {
-                title: '类型',
-                dataIndex: 'kind',
-                render: (kind: LocationKind) => <Tag>{locationLabels[kind]}</Tag>,
-              },
-              {
-                title: '属性',
-                render: (_, node) =>
-                  node.kind === 'idc'
-                    ? node.city
-                    : node.kind === 'rack'
-                      ? `${node.capacity} U`
-                      : '—',
-              },
-              {
-                title: '操作',
-                render: (_, node) => (
-                  <Space wrap>
-                    {childKind[node.kind] && (
-                      <Button
-                        type="link"
-                        onClick={() =>
-                          setEditing({ kind: childKind[node.kind]!, parentId: node.id })
-                        }
-                      >
-                        新增{locationLabels[childKind[node.kind]!]}
-                      </Button>
-                    )}
-                    <Button
-                      type="link"
-                      onClick={() => setEditing({ kind: node.kind, parentId: node.parentId, node })}
-                    >
-                      编辑位置
-                    </Button>
-                    <Button
-                      type="link"
-                      danger
-                      onClick={() =>
-                        confirm('删除模拟位置', node.name, () => api.deleteLocation(node.id))
-                      }
-                    >
-                      删除位置
-                    </Button>
-                  </Space>
-                ),
-              },
-            ]}
+      <Card className="query-card">
+        <Form
+          name={`${kind}Query`}
+          form={filters}
+          layout="inline"
+          className="query-form"
+          aria-label={`${label}查询条件`}
+          onFinish={(values) => update(values)}
+        >
+          <Form.Item name="q" label="名称">
+            <Input
+              type="search"
+              aria-label={`搜索${label}`}
+              placeholder={`输入${label}名称`}
+              allowClear
+            />
+          </Form.Item>
+          {parentField && (
+            <Form.Item name={parentField} label={`所属${locationLabels[parentKind!]}`}>
+              <Select
+                aria-label={`筛选所属${locationLabels[parentKind!]}`}
+                placeholder="全部父级"
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                options={parentOptions}
+              />
+            </Form.Item>
+          )}
+          <Form.Item className="query-actions">
+            <Space>
+              <Button type="primary" htmlType="submit">
+                查询
+              </Button>
+              <Button onClick={resetFilters}>重置</Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      </Card>
+      <Card
+        title={`${label}列表`}
+        extra={
+          <Space>
+            <Button
+              icon={<ReloadOutlined />}
+              aria-label={`刷新${label}列表`}
+              onClick={resources.reload}
+            />
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              aria-label={`新增${kind === 'idc' ? ' IDC' : label}`}
+              disabled={
+                resources.loading || !!resources.error || (!!parentKind && !parentOptions.length)
+              }
+              onClick={() => setEditing({})}
+            >
+              新增{kind === 'idc' ? ' IDC' : label}
+            </Button>
+          </Space>
+        }
+      >
+        {parentKind && !resources.loading && !resources.error && !parentOptions.length && (
+          <Alert
+            className="page-note"
+            type="info"
+            showIcon
+            title={`请先在${locationLabels[parentKind]}管理中创建父级资源。`}
           />
         )}
-      </QueryView>
+        <QueryView query={resources}>
+          {({ page, nodes: currentNodes }) => (
+            <Table<Resource>
+              rowKey="id"
+              size="middle"
+              scroll={{ x: 850 }}
+              dataSource={page.items}
+              locale={{
+                emptyText: <EmptyState text={`暂无${label}，可新增资源或调整查询条件。`} />,
+              }}
+              pagination={{
+                current: page.page,
+                pageSize: page.pageSize,
+                total: page.total,
+                showSizeChanger: true,
+                showTotal: (total) => `共 ${total} 条`,
+              }}
+              onChange={(pagination, _, sorter) => {
+                const sort = Array.isArray(sorter) ? sorter[0] : sorter;
+                update({
+                  page: pagination.current,
+                  pageSize: pagination.pageSize,
+                  sort: 'name',
+                  order: sort.order === 'descend' ? 'desc' : 'asc',
+                });
+              }}
+              columns={[
+                {
+                  title: `${label}名称`,
+                  dataIndex: 'name',
+                  sorter: true,
+                  sortOrder: query.order === 'desc' ? 'descend' : 'ascend',
+                  render: (name: string, entry) => (
+                    <Button type="link" onClick={() => setDetailId(entry.id)}>
+                      {name}
+                    </Button>
+                  ),
+                },
+                ...(kind === 'idc'
+                  ? [
+                      {
+                        title: '城市',
+                        render: (_: unknown, entry: Resource) =>
+                          'city' in entry ? entry.city : '—',
+                      },
+                    ]
+                  : [
+                      {
+                        title: '所属路径',
+                        render: (_: unknown, entry: Resource) =>
+                          pathText(
+                            currentNodes.find((node) => node.id === entry.id)?.parentId ?? null,
+                            currentNodes,
+                          ),
+                      },
+                    ]),
+                ...(kind === 'rack'
+                  ? [
+                      {
+                        title: '容量',
+                        render: (_: unknown, entry: Resource) =>
+                          'capacity' in entry ? `${entry.capacity} U` : '—',
+                      },
+                    ]
+                  : []),
+                { title: '资源 ID', dataIndex: 'id' },
+                {
+                  title: '操作',
+                  render: (_, entry) => (
+                    <Space>
+                      <Button type="link" onClick={() => setDetailId(entry.id)}>
+                        详情
+                      </Button>
+                      <Button type="link" onClick={() => setEditing({ resource: entry })}>
+                        编辑
+                      </Button>
+                      <Button
+                        type="link"
+                        danger
+                        onClick={() =>
+                          confirm(`删除模拟${label}`, entry.name, () =>
+                            api.deleteResource(kind, entry.id),
+                          )
+                        }
+                      >
+                        删除
+                      </Button>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+          )}
+        </QueryView>
+      </Card>
       {editing && (
-        <FormModal<LocationInput>
-          title={`${editing.node ? '编辑' : '新增'}${locationLabels[editing.kind]}`}
+        <FormModal<Fields>
+          title={`${editing.resource ? '编辑' : '新增'}${label}`}
           open
           onClose={() => setEditing(undefined)}
-          initialValues={editing.node ?? { name: '', city: '', capacity: 42 }}
+          initialValues={editing.resource ?? { name: '', city: '', capacity: 42 }}
           onSubmit={async (values) => {
-            if (editing.node)
-              await api.editLocation(editing.node.id, {
-                name: values.name,
-                city: values.city,
-                capacity: values.capacity,
-              });
-            else
-              await api.createLocation({
-                ...values,
-                kind: editing.kind,
-                parentId: editing.parentId,
-              });
+            if (editing.resource) await api.editResource(kind, editing.resource.id, values);
+            else await api.createResource(kind, values as ResourceInputMap[LocationKind]);
           }}
         >
-          <p>父级：{query.data?.find((node) => node.id === editing.parentId)?.name ?? '根级'}</p>
           <Form.Item
             name="name"
-            label="位置名称"
+            label={`${label}名称`}
             rules={[{ required: true, whitespace: true, max: 64 }]}
           >
             <Input maxLength={64} />
           </Form.Item>
-          {editing.kind === 'idc' && (
+          {parentField &&
+            (editing.resource ? (
+              <p>
+                所属{locationLabels[parentKind!]}：
+                {pathText(
+                  nodes.find((node) => node.id === editing.resource?.id)?.parentId ?? null,
+                  nodes,
+                )}
+                （不可修改）
+              </p>
+            ) : (
+              <Form.Item
+                name={parentField}
+                label={`所属${locationLabels[parentKind!]}`}
+                rules={[{ required: true }]}
+              >
+                <Select
+                  showSearch
+                  aria-label={`所属${locationLabels[parentKind!]}`}
+                  optionFilterProp="label"
+                  placeholder="选择父级资源"
+                  options={parentOptions}
+                />
+              </Form.Item>
+            ))}
+          {kind === 'idc' && (
             <Form.Item
               name="city"
               label="城市（虚构数据）"
@@ -147,13 +324,43 @@ export function LocationManager() {
               <Input maxLength={64} />
             </Form.Item>
           )}
-          {editing.kind === 'rack' && (
+          {kind === 'rack' && (
             <Form.Item name="capacity" label="机架容量（U）" rules={[{ required: true }]}>
               <InputNumber min={1} max={42} precision={0} />
             </Form.Item>
           )}
         </FormModal>
       )}
-    </Card>
+      <Drawer
+        title={`${label}详情`}
+        open={!!detailId}
+        onClose={() => setDetailId(undefined)}
+        size={760}
+        destroyOnHidden
+      >
+        {resources.error ? (
+          <Alert type="error" title="详情暂不可用，请关闭后重试列表。" />
+        ) : detail ? (
+          <>
+            <Descriptions
+              column={1}
+              bordered
+              items={[
+                { key: 'name', label: `${label}名称`, children: detail.name },
+                { key: 'id', label: '资源 ID', children: detail.id },
+                { key: 'path', label: '完整位置', children: pathText(detail.id, nodes) },
+                ...(kind === 'idc' ? [{ key: 'city', label: '城市', children: detail.city }] : []),
+                ...(kind === 'rack'
+                  ? [{ key: 'capacity', label: '机架容量', children: `${detail.capacity} U` }]
+                  : []),
+              ]}
+            />
+            {kind === 'rack' && <RackOccupancy rackId={detail.id} />}
+          </>
+        ) : (
+          <EmptyState text="资源已不存在，请关闭后刷新列表。" />
+        )}
+      </Drawer>
+    </>
   );
 }

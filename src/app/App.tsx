@@ -38,7 +38,7 @@ import {
 } from 'react-router-dom';
 import { Overview } from '../features/overview/Overview';
 import { Inventory } from '../features/inventory/Inventory';
-import { Facilities } from '../features/facilities/Facilities';
+import { LocationManager } from '../features/facilities/LocationManager';
 import { Discovery } from '../features/discovery/Discovery';
 import { Network } from '../features/network/Network';
 import { Provisioning } from '../features/provisioning/Provisioning';
@@ -50,7 +50,10 @@ import type { Scenario } from '../shared/api/mock';
 
 const navigation = [
   { key: '/', icon: <AppstoreOutlined />, label: '资源总览' },
-  { key: '/facilities', icon: <ApartmentOutlined />, label: 'IDC 资源' },
+  { key: '/idcs', icon: <ApartmentOutlined />, label: 'IDC管理' },
+  { key: '/buildings', icon: <ApartmentOutlined />, label: '楼栋管理' },
+  { key: '/rooms', icon: <ApartmentOutlined />, label: '机房管理' },
+  { key: '/racks', icon: <ApartmentOutlined />, label: '机架管理' },
   { key: '/inventory', icon: <CloudServerOutlined />, label: '服务器资产' },
   { key: '/discovery', icon: <RadarChartOutlined />, label: '设备发现' },
   { key: '/network', icon: <DeploymentUnitOutlined />, label: 'IP 资源池' },
@@ -182,7 +185,14 @@ function Shell() {
               </div>
               <Routes>
                 <Route path="/" element={<Overview />} />
-                <Route path="/facilities" element={<Facilities />} />
+                <Route path="/facilities" element={<Navigate to="/idcs" replace />} />
+                <Route path="/idcs" element={<LocationManager key="idc" kind="idc" />} />
+                <Route
+                  path="/buildings"
+                  element={<LocationManager key="building" kind="building" />}
+                />
+                <Route path="/rooms" element={<LocationManager key="room" kind="room" />} />
+                <Route path="/racks" element={<LocationManager key="rack" kind="rack" />} />
                 <Route path="/inventory" element={<Inventory />} />
                 <Route path="/discovery" element={<Discovery />} />
                 <Route path="/network" element={<Network />} />
