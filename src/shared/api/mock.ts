@@ -6,12 +6,20 @@ import type {
   Discovery,
   Facility,
   Installation,
+  ImageArtifact,
+  ImageInput,
+  InstallTemplate,
+  TemplateInput,
+  InstallRequest,
+  InstallationPreview,
+  Preflight,
   IpPool,
   Server,
   ServerInput,
   ServerStatus,
   Transport,
 } from './contracts';
+import { updateInstallationProgress } from './installation-progress';
 
 export type Scenario = 'normal' | 'empty' | 'error';
 class DomainError extends Error {
@@ -62,6 +70,8 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
   let addresses: Address[] = [];
   let discoveries: Discovery[] = [];
   let installations: Installation[] = [];
+  let images: ImageArtifact[] = [];
+  let templates: InstallTemplate[] = [];
   let events: AuditEvent[] = [];
   const id = (prefix: string) => `${prefix}-${++sequence}`;
   const audit = (
@@ -84,6 +94,58 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
     sequence = 100;
     discoveries = [];
     installations = [];
+    images =
+      next === 'empty'
+        ? []
+        : [
+            {
+              id: 'ubuntu-24.04',
+              name: 'Ubuntu 24.04 LTS',
+              family: 'ubuntu',
+              version: '24.04',
+              architecture: 'x86_64',
+              sourceLabel: 'Ubuntu 安装介质（演示元数据）',
+              checksum: 'a'.repeat(64),
+              status: 'ready',
+              createdAt: '2026-11-01T08:00:00.000Z',
+            },
+            {
+              id: 'rocky-9',
+              name: 'Rocky Linux 9',
+              family: 'rocky',
+              version: '9',
+              architecture: 'x86_64',
+              sourceLabel: 'Rocky 安装介质（演示元数据）',
+              checksum: 'b'.repeat(64),
+              status: 'ready',
+              createdAt: '2026-11-01T08:00:00.000Z',
+            },
+            {
+              id: 'ubuntu-draft',
+              name: 'Ubuntu 验证草稿',
+              family: 'ubuntu',
+              version: '24.04-test',
+              architecture: 'x86_64',
+              sourceLabel: '待验证介质（演示元数据）',
+              checksum: 'c'.repeat(64),
+              status: 'draft',
+              createdAt: '2026-11-01T08:00:00.000Z',
+            },
+          ];
+    templates =
+      next === 'empty'
+        ? []
+        : images.map((image) => ({
+            id: `tpl-${image.id}`,
+            name: `${image.name} 标准配置`,
+            version: '1',
+            imageId: image.id,
+            bootMode: 'uefi',
+            rootDisk: 'sda',
+            partitionLayout: 'lvm',
+            timezone: 'UTC',
+            createdAt: image.createdAt,
+          }));
     events = [];
     facilities =
       next === 'empty'
@@ -179,6 +241,180 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
   const racks = () => facilities.flatMap((f) => f.racks);
   const getServer = (serverId: string) =>
     servers.find((s) => s.id === serverId) ?? fail(404, 'NOT_FOUND', '服务器不存在');
+  const getImage = (imageId: string) =>
+    images.find((image) => image.id === imageId) ?? fail(404, 'NOT_FOUND', '镜像不存在');
+  const getTemplate = (templateId: string) =>
+    templates.find((template) => template.id === templateId) ??
+    fail(404, 'NOT_FOUND', '模板不存在');
+  const getInstallation = (taskId: string) =>
+    installations.find((task) => task.id === taskId) ?? fail(404, 'NOT_FOUND', '装机任务不存在');
+  function validateInstallRequest(body: Record<string, unknown>): InstallRequest {
+    const input: InstallRequest = {
+      serverId: required(body.serverId, 'serverId'),
+      imageId: required(body.imageId, 'imageId'),
+      templateId: required(body.templateId, 'templateId'),
+      hostname: required(body.hostname, 'hostname', 63).toLowerCase(),
+      method: choice(body.method, 'method', ['pxe', 'iso']),
+    };
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(input.hostname))
+      fail(400, 'VALIDATION_ERROR', '主机名格式无效', {
+        hostname: '使用 1–63 位字母、数字或连字符，首尾不能是连字符',
+      });
+    if (body.simulateFailure !== undefined && typeof body.simulateFailure !== 'boolean')
+      fail(400, 'VALIDATION_ERROR', 'simulateFailure 必须为布尔值');
+    input.simulateFailure = body.simulateFailure === true;
+    if (body.expectedIp !== undefined)
+      input.expectedIp = required(body.expectedIp, 'expectedIp', 45);
+    return input;
+  }
+  function preview(input: InstallRequest): InstallationPreview {
+    const server = getServer(input.serverId);
+    const image = getImage(input.imageId);
+    const template = getTemplate(input.templateId);
+    const address = addresses.find((entry) => entry.serverId === server.id);
+    const pool = address && pools.find((entry) => entry.id === address.poolId);
+    const parameters = structuredClone({
+      serverId: server.id,
+      serverName: server.name,
+      serial: server.serial,
+      hostname: input.hostname,
+      method: input.method,
+      image,
+      template,
+      address: address && pool ? { ip: address.ip, gateway: pool.gateway, cidr: pool.cidr } : null,
+    });
+    return {
+      parameters,
+      plan: JSON.stringify(
+        {
+          prototype: true,
+          executable: false,
+          target: { id: server.id, serial: server.serial, hostname: input.hostname },
+          image: {
+            id: image.id,
+            family: image.family,
+            version: image.version,
+            architecture: image.architecture,
+            declaredSha256: image.checksum,
+          },
+          template: { id: template.id, version: template.version },
+          boot: { method: input.method, mode: template.bootMode },
+          storage: {
+            rootDisk: template.rootDisk,
+            layout: template.partitionLayout,
+            effect: '覆盖目标磁盘（仅模拟，不执行）',
+          },
+          network: parameters.address,
+          timezone: template.timezone,
+        },
+        null,
+        2,
+      ),
+    };
+  }
+  function preflight(input: InstallRequest): Preflight {
+    const result = preview(input);
+    const server = getServer(input.serverId);
+    const check = (
+      key: string,
+      label: string,
+      pass: boolean,
+      message: string,
+    ): Preflight['checks'][number] => ({ key, label, status: pass ? 'pass' : 'fail', message });
+    const checks: Preflight['checks'] = [
+      check(
+        'state',
+        '目标状态',
+        ['ready', 'maintenance'].includes(server.status),
+        ['ready', 'maintenance'].includes(server.status)
+          ? '目标允许创建模拟任务'
+          : '装机中或退役设备不可再次装机',
+      ),
+      check(
+        'ip',
+        '业务 IP',
+        !!result.parameters.address,
+        result.parameters.address
+          ? `已绑定 ${result.parameters.address.ip}`
+          : '请先分配同中心业务 IP',
+      ),
+      check(
+        'image',
+        '镜像记录',
+        result.parameters.image.status === 'ready',
+        result.parameters.image.status === 'ready'
+          ? '元数据标记为就绪；未验证真实介质'
+          : '草稿镜像不可装机',
+      ),
+      check(
+        'template',
+        '模板关联',
+        result.parameters.template.imageId === input.imageId,
+        result.parameters.template.imageId === input.imageId
+          ? '模板与所选镜像匹配'
+          : '模板关联的镜像与当前选择不一致',
+      ),
+      {
+        key: 'hardware',
+        label: '真实环境验证',
+        status: 'warning',
+        message: '未探测磁盘、架构、启动固件或网络服务；未下载镜像或校验真实 SHA-256。均为 Mock。',
+      },
+    ];
+    return {
+      ...result,
+      checkedAt: timestamp(),
+      passed: checks.every((item) => item.status !== 'fail'),
+      checks,
+    };
+  }
+  function createInstallation(
+    input: InstallRequest,
+    requestId: string,
+    retryOf: string | null = null,
+  ): Installation {
+    const report = preflight(input);
+    if (input.expectedIp !== undefined && input.expectedIp !== report.parameters.address?.ip)
+      fail(409, 'SNAPSHOT_CHANGED', '预览后的 IP 已变化，请重新预览并预检');
+    const failed = report.checks.find((item) => item.status === 'fail');
+    if (failed)
+      fail(
+        409,
+        (
+          { ip: 'IP_REQUIRED', image: 'IMAGE_NOT_READY', template: 'TEMPLATE_MISMATCH' } as Record<
+            string,
+            string
+          >
+        )[failed.key] ?? 'STATE_CONFLICT',
+        failed.message,
+      );
+    if (
+      retryOf &&
+      JSON.stringify(report.parameters) !== JSON.stringify(getInstallation(retryOf).parameters)
+    )
+      fail(409, 'SNAPSHOT_CHANGED', '资源参数已改变，请新建任务并重新预览');
+    const task: Installation = {
+      id: id('install'),
+      serverId: input.serverId,
+      image: report.parameters.image.name,
+      method: input.method,
+      simulateFailure: input.simulateFailure === true,
+      status: 'running',
+      progress: 0,
+      createdAt: timestamp(),
+      logs: [],
+      parameters: report.parameters,
+      stages: [],
+      events: [],
+      failureReason: null,
+      retryOf,
+    };
+    updateInstallationProgress(task, taskDuration);
+    getServer(input.serverId).status = 'installing';
+    installations.unshift(task);
+    audit(retryOf ? '重试模拟装机' : '提交模拟装机', task.id, requestId);
+    return task;
+  }
   function validateServer(body: Record<string, unknown>): ServerInput {
     const result: ServerInput = {
       assetTag: required(body.assetTag, 'assetTag', 32),
@@ -241,26 +477,12 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
     for (const task of installations.filter(
       (t) => t.status === 'running' || t.status === 'pending',
     )) {
-      task.progress = Math.min(
-        100,
-        Math.floor(((Date.now() - Date.parse(task.createdAt)) / taskDuration) * 100),
-      );
-      task.logs = [
-        '任务已创建（模拟）',
-        ...(task.progress >= 20 ? ['检查资源与 IP 绑定完成'] : []),
-        ...(task.progress >= 50 ? [`加载 ${task.method.toUpperCase()} 演示镜像`] : []),
-      ];
-      if (task.progress >= 100) {
-        task.status = task.simulateFailure ? 'failed' : 'succeeded';
-        task.logs.push(
-          task.simulateFailure
-            ? '模拟镜像校验失败；未安装真实系统'
-            : '模拟装机完成；未操作真实设备',
-        );
+      updateInstallationProgress(task, taskDuration);
+      if (task.status === 'failed' || task.status === 'succeeded') {
         const server = getServer(task.serverId);
         server.status = task.simulateFailure ? 'maintenance' : 'ready';
         if (!task.simulateFailure) {
-          server.os = task.image === 'ubuntu-24.04' ? 'Ubuntu 24.04 LTS' : 'Rocky Linux 9';
+          server.os = task.parameters.image.name;
           server.power = 'on';
         }
         audit(
@@ -269,7 +491,7 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
           requestId,
           task.simulateFailure ? 'failure' : 'success',
         );
-      } else task.status = 'running';
+      }
     }
   }
   function paginate<T extends object>(
@@ -337,6 +559,79 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
       let status = 200;
       if (method === 'GET' && path === '/facilities') data = facilities;
       else if (method === 'GET' && path === '/ip-pools') data = pools;
+      else if (method === 'GET' && path === '/images') {
+        const q = (params.get('q') ?? '').toLowerCase();
+        data = paginate(
+          images.filter((image) => `${image.name} ${image.version}`.toLowerCase().includes(q)),
+          params,
+          ['name', 'createdAt'],
+          'name',
+        );
+      } else if (method === 'POST' && path === '/images') {
+        const image: ImageInput = {
+          name: required(body.name, 'name'),
+          version: required(body.version, 'version', 32),
+          family: choice(body.family, 'family', ['ubuntu', 'rocky']),
+          architecture: choice(body.architecture, 'architecture', ['x86_64']),
+          sourceLabel: required(body.sourceLabel, 'sourceLabel', 128),
+          checksum: required(body.checksum, 'checksum', 64).toLowerCase(),
+          status: choice(body.status, 'status', ['draft', 'ready']),
+        };
+        if (!/^[a-f0-9]{64}$/.test(image.checksum))
+          fail(400, 'VALIDATION_ERROR', 'SHA-256 必须为 64 位十六进制字符串', {
+            checksum: '仅保存声明值，不校验真实文件',
+          });
+        if (
+          images.some(
+            (entry) =>
+              entry.name.toLowerCase() === image.name.toLowerCase() &&
+              entry.version.toLowerCase() === image.version.toLowerCase(),
+          )
+        )
+          fail(409, 'IMAGE_CONFLICT', '同名同版本镜像已存在');
+        const result: ImageArtifact = { ...image, id: id('img'), createdAt: timestamp() };
+        images.unshift(result);
+        data = result;
+        status = 201;
+        audit('新增演示镜像元数据', result.id, requestId);
+      } else if (method === 'GET' && path === '/templates') {
+        const q = (params.get('q') ?? '').toLowerCase();
+        data = paginate(
+          templates.filter((template) =>
+            `${template.name} ${template.version}`.toLowerCase().includes(q),
+          ),
+          params,
+          ['name', 'createdAt'],
+          'name',
+        );
+      } else if (method === 'POST' && path === '/templates') {
+        const template: TemplateInput = {
+          name: required(body.name, 'name'),
+          version: required(body.version, 'version', 32),
+          imageId: required(body.imageId, 'imageId'),
+          bootMode: choice(body.bootMode, 'bootMode', ['uefi', 'bios']),
+          rootDisk: choice(body.rootDisk, 'rootDisk', ['sda', 'nvme0n1']),
+          partitionLayout: choice(body.partitionLayout, 'partitionLayout', ['lvm', 'single']),
+          timezone: choice(body.timezone, 'timezone', ['UTC', 'Asia/Shanghai']),
+        };
+        getImage(template.imageId);
+        if (
+          templates.some(
+            (entry) =>
+              entry.name.toLowerCase() === template.name.toLowerCase() &&
+              entry.version.toLowerCase() === template.version.toLowerCase(),
+          )
+        )
+          fail(409, 'TEMPLATE_CONFLICT', '同名同版本模板已存在');
+        const result: InstallTemplate = { ...template, id: id('tpl'), createdAt: timestamp() };
+        templates.unshift(result);
+        data = result;
+        status = 201;
+        audit('新增演示装机模板', result.id, requestId);
+      } else if (method === 'POST' && path === '/installation-previews')
+        data = preview(validateInstallRequest(body));
+      else if (method === 'POST' && path === '/installation-preflights')
+        data = preflight(validateInstallRequest(body));
       else if (method === 'GET' && path === '/dashboard') {
         data = {
           total: servers.length,
@@ -490,31 +785,24 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
         audit('回收 IP', address.ip, requestId);
       } else if (method === 'GET' && path === '/installations')
         data = paginate(installations, params, ['createdAt'], 'createdAt');
-      else if (method === 'POST' && path === '/installations') {
-        const server = getServer(required(body.serverId, 'serverId'));
-        const image = choice(body.image, 'image', ['ubuntu-24.04', 'rocky-9']);
-        const installMethod = choice(body.method, 'method', ['pxe', 'iso']);
-        if (body.simulateFailure !== undefined && typeof body.simulateFailure !== 'boolean')
-          fail(400, 'VALIDATION_ERROR', 'simulateFailure 必须为布尔值');
-        if (server.status !== 'ready' && server.status !== 'maintenance')
-          fail(409, 'STATE_CONFLICT', '该服务器不允许装机');
-        if (!addresses.some((a) => a.serverId === server.id))
-          fail(409, 'IP_REQUIRED', '请先为该服务器分配 IP');
-        const task: Installation = {
-          id: id('install'),
-          serverId: server.id,
-          image,
-          method: installMethod,
-          simulateFailure: body.simulateFailure === true,
-          status: 'running',
-          progress: 0,
-          createdAt: timestamp(),
-          logs: ['任务已创建（模拟）'],
+      else if (method === 'GET' && /^\/installations\/[^/]+$/.test(path))
+        data = getInstallation(path.split('/')[2]);
+      else if (method === 'POST' && /^\/installations\/[^/]+\/retry$/.test(path)) {
+        const original = getInstallation(path.split('/')[2]);
+        if (original.status !== 'failed') fail(409, 'STATE_CONFLICT', '只有失败任务允许重试');
+        if (installations.some((entry) => entry.retryOf === original.id))
+          fail(409, 'ALREADY_RETRIED', '该失败任务已创建重试，请查看新任务');
+        const input: InstallRequest = {
+          serverId: original.serverId,
+          imageId: original.parameters.image.id,
+          templateId: original.parameters.template.id,
+          hostname: original.parameters.hostname,
+          method: original.method,
         };
-        server.status = 'installing';
-        installations.unshift(task);
-        data = task;
-        audit('提交模拟装机', server.name, requestId);
+        data = createInstallation(input, requestId, original.id);
+        status = 201;
+      } else if (method === 'POST' && path === '/installations') {
+        data = createInstallation(validateInstallRequest(body), requestId);
         status = 201;
       } else if (method === 'GET' && path === '/audit-events') {
         const q = (params.get('q') ?? '').toLowerCase();

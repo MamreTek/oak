@@ -7,6 +7,13 @@ import type {
   ErrorEnvelope,
   Facility,
   Installation,
+  ImageArtifact,
+  ImageInput,
+  InstallTemplate,
+  TemplateInput,
+  InstallRequest,
+  InstallationPreview,
+  Preflight,
   IpPool,
   ListQuery,
   Page,
@@ -94,12 +101,18 @@ export function createApi(transport: Transport) {
         order: 'desc',
         ...query,
       }),
-    install: (input: {
-      serverId: string;
-      image: Installation['image'];
-      method: Installation['method'];
-      simulateFailure?: boolean;
-    }) => request<Installation>('/installations', 'POST', input),
+    images: (query?: ListQuery) => request<Page<ImageArtifact>>('/images', 'GET', undefined, query),
+    createImage: (input: ImageInput) => request<ImageArtifact>('/images', 'POST', input),
+    templates: (query?: ListQuery) =>
+      request<Page<InstallTemplate>>('/templates', 'GET', undefined, query),
+    createTemplate: (input: TemplateInput) => request<InstallTemplate>('/templates', 'POST', input),
+    preview: (input: InstallRequest) =>
+      request<InstallationPreview>('/installation-previews', 'POST', input),
+    preflight: (input: InstallRequest) =>
+      request<Preflight>('/installation-preflights', 'POST', input),
+    installation: (id: string) => request<Installation>(`/installations/${id}`),
+    install: (input: InstallRequest) => request<Installation>('/installations', 'POST', input),
+    retry: (id: string) => request<Installation>(`/installations/${id}/retry`, 'POST', {}),
     audit: (query?: ListQuery) =>
       request<Page<AuditEvent>>('/audit-events', 'GET', undefined, {
         sort: 'createdAt',

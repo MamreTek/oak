@@ -42,6 +42,7 @@ import { Facilities } from '../features/facilities/Facilities';
 import { Discovery } from '../features/discovery/Discovery';
 import { Network } from '../features/network/Network';
 import { Provisioning } from '../features/provisioning/Provisioning';
+import { Artifacts } from '../features/provisioning/Artifacts';
 import { Audit } from '../features/audit/Audit';
 import { RefreshContext } from '../shared/ui';
 import { mockService } from '../shared/api/mock';
@@ -53,6 +54,7 @@ const navigation = [
   { key: '/inventory', icon: <CloudServerOutlined />, label: '服务器资产' },
   { key: '/discovery', icon: <RadarChartOutlined />, label: '设备发现' },
   { key: '/network', icon: <DeploymentUnitOutlined />, label: 'IP 资源池' },
+  { key: '/images', icon: <AppstoreOutlined />, label: '镜像与模板' },
   { key: '/provisioning', icon: <ExperimentOutlined />, label: '系统安装' },
   { key: '/audit', icon: <AuditOutlined />, label: '操作审计' },
 ];
@@ -185,6 +187,7 @@ function Shell() {
                 <Route path="/discovery" element={<Discovery />} />
                 <Route path="/network" element={<Network />} />
                 <Route path="/provisioning" element={<Provisioning />} />
+                <Route path="/images" element={<Artifacts />} />
                 <Route path="/audit" element={<Audit />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

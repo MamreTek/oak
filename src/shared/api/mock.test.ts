@@ -54,7 +54,13 @@ describe('Oak API contract and domain flows', () => {
     ).rejects.toMatchObject({ details: { error: { code: 'ALREADY_IMPORTED' } } });
     const free = (await api.addresses({ poolId: 'pool-east', status: 'free' })).items[0];
     expect(await api.allocate(free.id, server.id)).toMatchObject({ serverId: server.id });
-    const task = await api.install({ serverId: server.id, image: 'ubuntu-24.04', method: 'pxe' });
+    const task = await api.install({
+      serverId: server.id,
+      imageId: 'ubuntu-24.04',
+      templateId: 'tpl-ubuntu-24.04',
+      hostname: 'oak-test',
+      method: 'pxe',
+    });
     expect((await api.server(server.id)).status).toBe('installing');
     await expect(api.release(free.id)).rejects.toMatchObject({ status: 409 });
     await expect(api.power(server.id, 'off')).rejects.toMatchObject({ status: 409 });
@@ -77,7 +83,13 @@ describe('Oak API contract and domain flows', () => {
     await api.release(free.id);
     await api.lifecycle(server.id, 'retired');
     await expect(
-      api.install({ serverId: server.id, image: 'rocky-9', method: 'iso' }),
+      api.install({
+        serverId: server.id,
+        imageId: 'rocky-9',
+        templateId: 'tpl-rocky-9',
+        hostname: 'oak-test',
+        method: 'iso',
+      }),
     ).rejects.toMatchObject({ status: 409 });
     await expect(api.lifecycle(server.id, 'ready')).rejects.toMatchObject({ status: 409 });
   });
@@ -110,7 +122,13 @@ describe('Oak API contract and domain flows', () => {
       details: { error: { code: 'DATA_CENTER_MISMATCH' } },
     });
     await expect(
-      api.install({ serverId: 'srv-7', image: 'rocky-9', method: 'iso' }),
+      api.install({
+        serverId: 'srv-7',
+        imageId: 'rocky-9',
+        templateId: 'tpl-rocky-9',
+        hostname: 'oak-test',
+        method: 'iso',
+      }),
     ).rejects.toMatchObject({ details: { error: { code: 'IP_REQUIRED' } } });
     await api.allocate(east[0].id, 'srv-7');
     await expect(api.allocate(east[0].id, 'srv-8')).rejects.toMatchObject({
@@ -128,7 +146,9 @@ describe('Oak API contract and domain flows', () => {
   it('keeps failed installs observable and permits an explicit retry', async () => {
     const task = await api.install({
       serverId: 'srv-1',
-      image: 'rocky-9',
+      imageId: 'rocky-9',
+      templateId: 'tpl-rocky-9',
+      hostname: 'oak-test',
       method: 'iso',
       simulateFailure: true,
     });
@@ -137,7 +157,13 @@ describe('Oak API contract and domain flows', () => {
     expect(failed.status).toBe('failed');
     expect(failed.logs.join()).toContain('模拟镜像校验失败');
     expect(await api.server('srv-1')).toMatchObject({ status: 'maintenance', os: null });
-    await api.install({ serverId: 'srv-1', image: 'rocky-9', method: 'iso' });
+    await api.install({
+      serverId: 'srv-1',
+      imageId: 'rocky-9',
+      templateId: 'tpl-rocky-9',
+      hostname: 'oak-test',
+      method: 'iso',
+    });
     vi.advanceTimersByTime(1001);
     expect(await api.server('srv-1')).toMatchObject({ status: 'ready', os: 'Rocky Linux 9' });
     expect((await api.audit({ pageSize: 100 })).items.some((e) => e.result === 'failure')).toBe(

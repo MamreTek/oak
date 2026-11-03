@@ -1,66 +1,194 @@
-import {
-  Alert,
-  Button,
-  Card,
-  Checkbox,
-  Form,
-  Select,
-  Space,
-  Table,
-  Progress,
-  Drawer,
-  Timeline,
-} from 'antd';
-import { PlayCircleOutlined } from '@ant-design/icons';
-import { useCallback, useState } from 'react';
-import type { Installation } from '../../shared/api/contracts';
+import { Alert, Button, Card, Drawer, Progress, Space, Steps, Table, Tag } from 'antd';
+import { PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons';
+import { useCallback, useContext, useState } from 'react';
 import { api } from '../../shared/api/client';
+import type { Installation, Preflight } from '../../shared/api/contracts';
 import {
   EmptyState,
-  FormModal,
+  errorText,
   PageHeader,
   QueryView,
+  RefreshContext,
   StatusTag,
   timeText,
   useQuery,
 } from '../../shared/ui';
+import { InstallWizard, ParameterSummary, PreflightResults } from './InstallWizard';
 
-type InstallInput = {
-  serverId: string;
-  image: Installation['image'];
-  method: Installation['method'];
-  simulateFailure?: boolean;
-};
+function TaskDetail({
+  id,
+  onClose,
+  onSelect,
+}: {
+  id: string;
+  onClose: () => void;
+  onSelect: (id: string) => void;
+}) {
+  const task = useQuery(
+    useCallback(() => api.installation(id), [id]),
+    1000,
+  );
+  const { refresh } = useContext(RefreshContext);
+  const [report, setReport] = useState<Preflight>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const run = async (action: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await action();
+    } catch (e) {
+      setError(errorText(e));
+      setReport(undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Drawer title="装机任务详情（模拟）" size={880} open onClose={onClose}>
+      <QueryView query={task}>
+        {(data) => (
+          <Space orientation="vertical" size={20} style={{ width: '100%' }}>
+            <Space wrap>
+              <strong className="mono">{data.id}</strong>
+              <StatusTag status={data.status} />
+              <span className="muted">{timeText(data.createdAt)} UTC</span>
+            </Space>
+            {data.retryOf && (
+              <Alert
+                type="info"
+                title={
+                  <Space wrap>
+                    本次为重试任务
+                    <Button type="link" onClick={() => onSelect(data.retryOf!)}>
+                      查看原失败任务 {data.retryOf}
+                    </Button>
+                  </Space>
+                }
+              />
+            )}
+            <Progress
+              percent={data.progress}
+              status={data.status === 'failed' ? 'exception' : undefined}
+            />
+            <Steps
+              orientation="vertical"
+              size="small"
+              items={data.stages.map((stage) => ({
+                title: `${stage.label}${stage.status === 'skipped' ? '（已跳过）' : ''}`,
+                status:
+                  stage.status === 'failed'
+                    ? 'error'
+                    : stage.status === 'succeeded'
+                      ? 'finish'
+                      : stage.status === 'running'
+                        ? 'process'
+                        : 'wait',
+                content: stage.finishedAt
+                  ? `${timeText(stage.finishedAt)} UTC`
+                  : stage.status === 'skipped'
+                    ? '前序阶段失败，未继续执行'
+                    : stage.status === 'running'
+                      ? '正在模拟执行'
+                      : '等待前序阶段',
+              }))}
+            />
+            {data.failureReason && (
+              <Alert type="error" showIcon title="失败原因" description={data.failureReason} />
+            )}
+            <details open>
+              <summary>本次任务参数快照</summary>
+              <div style={{ marginTop: 12 }}>
+                <ParameterSummary parameters={data.parameters} />
+              </div>
+            </details>
+            <Table
+              size="small"
+              rowKey={(event) => `${event.at}-${event.stage}-${event.message}`}
+              pagination={false}
+              scroll={{ x: 620 }}
+              dataSource={data.events}
+              columns={[
+                { title: '时间（UTC）', dataIndex: 'at', width: 170, render: timeText },
+                {
+                  title: '级别',
+                  dataIndex: 'level',
+                  width: 90,
+                  render: (level) => (
+                    <Tag color={level === 'error' ? 'red' : 'blue'}>{level.toUpperCase()}</Tag>
+                  ),
+                },
+                { title: '阶段日志', dataIndex: 'message' },
+              ]}
+            />
+            {data.status === 'failed' && (
+              <>
+                <Alert
+                  type="warning"
+                  showIcon
+                  title="重试将沿用本次参数快照，创建关联的新任务"
+                  description="原失败记录保留。先重新预检；地址或配置变化时请新建任务。演示故障开关不会继承。重试仍为模拟，不操作设备。"
+                />
+                {report && <PreflightResults report={report} />}
+                <Space wrap>
+                  <Button
+                    loading={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        setReport(
+                          await api.preflight({
+                            serverId: data.serverId,
+                            imageId: data.parameters.image.id,
+                            templateId: data.parameters.template.id,
+                            hostname: data.parameters.hostname,
+                            method: data.method,
+                          }),
+                        );
+                      })
+                    }
+                  >
+                    预检重试条件
+                  </Button>
+                  <Button
+                    type="primary"
+                    disabled={!report?.passed || busy}
+                    loading={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        const next = await api.retry(data.id);
+                        refresh();
+                        onSelect(next.id);
+                      })
+                    }
+                  >
+                    确认创建重试任务
+                  </Button>
+                </Space>
+              </>
+            )}
+            {error && <Alert type="error" role="alert" title={error} showIcon />}
+            <Alert type="info" title="日志与阶段均由 Mock 生成；刷新页面会重置任务。" />
+          </Space>
+        )}
+      </QueryView>
+    </Drawer>
+  );
+}
 export function Provisioning() {
   const [create, setCreate] = useState(false);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string>();
+  const { refresh } = useContext(RefreshContext);
   const tasks = useQuery(
     useCallback(() => api.installations({ page }), [page]),
     1000,
   );
-  const resources = useQuery(
-    useCallback(
-      async () => ({
-        servers: (await api.servers({ pageSize: 100 })).items,
-        addresses: (await api.addresses({ pageSize: 100 })).items,
-      }),
-      [],
-    ),
-  );
-  const eligible =
-    resources.data?.servers.filter(
-      (s) =>
-        ['ready', 'maintenance'].includes(s.status) &&
-        resources.data?.addresses.some((a) => a.serverId === s.id),
-    ) ?? [];
-  const task = tasks.data?.items.find((t) => t.id === selected);
   return (
     <>
       <PageHeader
-        eyebrow="OS PROVISIONING"
         title="系统安装"
-        description="选择目标、方式与镜像，观察一次可追溯的模拟系统交付。"
+        description="从镜像与模板生成参数计划，经预检后观察分阶段交付与失败恢复。"
         extra={
           <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => setCreate(true)}>
             新建装机任务
@@ -72,15 +200,21 @@ export function Provisioning() {
         type="warning"
         showIcon
         title="模拟装机，不会写入任何真实磁盘"
-        description="PXE / ISO 均为演示流程；未执行真实引导、镜像下载或系统安装。目标设备需先分配 IP。"
+        description="PXE / ISO 均为演示流程。先建立镜像与模板、为设备分配 IP，再预览与预检；真实硬件和网络服务未验证。"
       />
       <Card>
+        <div className="table-toolbar">
+          <strong>装机任务</strong>
+          <Button style={{ marginLeft: 'auto' }} icon={<ReloadOutlined />} onClick={tasks.reload}>
+            刷新
+          </Button>
+        </div>
         <QueryView query={tasks}>
           {(data) => (
             <Table<Installation>
               size="middle"
               rowKey="id"
-              scroll={{ x: 900 }}
+              scroll={{ x: 980 }}
               dataSource={data.items}
               pagination={{
                 current: page,
@@ -90,25 +224,40 @@ export function Provisioning() {
                 showSizeChanger: false,
               }}
               locale={{
-                emptyText: <EmptyState text="还没有装机任务。先分配 IP，再创建一次模拟安装。" />,
+                emptyText: <EmptyState text="暂无装机任务。新建任务可先预览参数和运行预检。" />,
               }}
               columns={[
                 {
                   title: '任务 / 时间（UTC）',
                   dataIndex: 'id',
-                  render: (id, t) => (
-                    <div>
+                  render: (id, task) => (
+                    <>
                       <strong className="mono">{id}</strong>
-                      <div className="muted small">{timeText(t.createdAt)}</div>
-                    </div>
+                      <div className="muted small">{timeText(task.createdAt)}</div>
+                      {task.retryOf && <Tag>重试 {task.retryOf}</Tag>}
+                    </>
                   ),
                 },
                 {
                   title: '目标服务器',
-                  dataIndex: 'serverId',
-                  render: (id) => resources.data?.servers.find((s) => s.id === id)?.name ?? id,
+                  render: (_, task) => (
+                    <>
+                      {task.parameters.serverName}
+                      <div className="muted small">{task.parameters.hostname}</div>
+                    </>
+                  ),
                 },
-                { title: '镜像', dataIndex: 'image' },
+                {
+                  title: '镜像 / 模板',
+                  render: (_, task) => (
+                    <>
+                      {task.image}
+                      <div className="muted small">
+                        {task.parameters.template.name} · v{task.parameters.template.version}
+                      </div>
+                    </>
+                  ),
+                },
                 { title: '方式', dataIndex: 'method', render: (method) => method.toUpperCase() },
                 {
                   title: '状态',
@@ -118,20 +267,20 @@ export function Provisioning() {
                 {
                   title: '进度',
                   dataIndex: 'progress',
-                  width: 150,
-                  render: (n, t) => (
+                  width: 130,
+                  render: (n, task) => (
                     <Progress
                       percent={n}
                       size="small"
-                      status={t.status === 'failed' ? 'exception' : undefined}
+                      status={task.status === 'failed' ? 'exception' : undefined}
                     />
                   ),
                 },
                 {
                   title: '操作',
-                  render: (_, t) => (
-                    <Button type="link" onClick={() => setSelected(t.id)}>
-                      任务日志
+                  render: (_, task) => (
+                    <Button type="link" onClick={() => setSelected(task.id)}>
+                      阶段与日志
                     </Button>
                   ),
                 },
@@ -141,72 +290,24 @@ export function Provisioning() {
         </QueryView>
       </Card>
       {create && (
-        <FormModal<InstallInput>
-          title="新建模拟装机任务"
-          open
+        <InstallWizard
           onClose={() => setCreate(false)}
-          onSubmit={async (values) => {
-            await api.install(values);
+          onCreated={(id) => {
+            setCreate(false);
             setPage(1);
+            setSelected(id);
+            refresh();
           }}
-          initialValues={{ image: 'ubuntu-24.04', method: 'pxe', simulateFailure: false }}
-        >
-          <Form.Item name="serverId" label="目标服务器" rules={[{ required: true }]}>
-            <Select
-              showSearch
-              optionFilterProp="label"
-              options={eligible.map((s) => ({
-                value: s.id,
-                label: `${s.name} · ${resources.data?.addresses.find((a) => a.serverId === s.id)?.ip}`,
-              }))}
-              notFoundContent="暂无符合条件的服务器，请先分配 IP"
-            />
-          </Form.Item>
-          <Form.Item name="image" label="系统镜像" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'ubuntu-24.04', label: 'Ubuntu 24.04 LTS（演示）' },
-                { value: 'rocky-9', label: 'Rocky Linux 9（演示）' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="method" label="安装方式" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: 'pxe', label: 'PXE 网络安装（模拟）' },
-                { value: 'iso', label: 'ISO 挂载（模拟）' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item name="simulateFailure" valuePropName="checked">
-            <Checkbox>模拟镜像校验失败，验证错误处理</Checkbox>
-          </Form.Item>
-          <p className="muted small">
-            提交后目标进入“装机中”；完成或失败后自动更新状态。原型不保留刷新前的数据。
-          </p>
-        </FormModal>
+        />
       )}
-      <Drawer title="模拟任务日志" open={!!selected} onClose={() => setSelected(undefined)}>
-        {task ? (
-          <Space orientation="vertical" style={{ width: '100%' }}>
-            <strong className="mono">{task.id}</strong>
-            <StatusTag status={task.status} />
-            <Progress
-              percent={task.progress}
-              status={task.status === 'failed' ? 'exception' : undefined}
-            />
-            <Timeline
-              items={task.logs.map((log) => ({
-                content: log,
-                color: task.status === 'failed' && log.includes('失败') ? 'red' : 'green',
-              }))}
-            />
-            <Alert type="info" title="以上均为 Mock 生成的演示日志" />
-          </Space>
-        ) : (
-          <EmptyState text="任务不在当前列表页。请返回该任务所在页面。" />
-        )}
-      </Drawer>
+      {selected && (
+        <TaskDetail
+          key={selected}
+          id={selected}
+          onClose={() => setSelected(undefined)}
+          onSelect={setSelected}
+        />
+      )}
     </>
   );
 }

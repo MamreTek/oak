@@ -310,6 +310,25 @@ a {
 .mono {
   font-family: 'SFMono-Regular', Consolas, monospace;
 }
+.break-text {
+  overflow-wrap: anywhere;
+}
+.provision-steps {
+  margin: 24px 0;
+}
+.plan-preview {
+  margin: 12px 0 0;
+  padding: 16px;
+  max-height: 360px;
+  overflow: auto;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  font-size: 12px;
+}
+summary {
+  cursor: pointer;
+  font-weight: 500;
+}
 .loading-card {
   padding: 24px;
   background: #fff;

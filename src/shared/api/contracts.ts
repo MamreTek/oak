@@ -72,15 +72,92 @@ export interface Discovery {
   candidates: Candidate[];
   createdAt: string;
 }
+export interface ImageInput {
+  name: string;
+  family: 'ubuntu' | 'rocky';
+  version: string;
+  architecture: 'x86_64';
+  sourceLabel: string;
+  checksum: string;
+  status: 'draft' | 'ready';
+}
+export interface ImageArtifact extends ImageInput {
+  id: string;
+  createdAt: string;
+}
+export interface TemplateInput {
+  name: string;
+  version: string;
+  imageId: string;
+  bootMode: 'uefi' | 'bios';
+  rootDisk: 'sda' | 'nvme0n1';
+  partitionLayout: 'lvm' | 'single';
+  timezone: 'UTC' | 'Asia/Shanghai';
+}
+export interface InstallTemplate extends TemplateInput {
+  id: string;
+  createdAt: string;
+}
+export interface InstallRequest {
+  serverId: string;
+  imageId: string;
+  templateId: string;
+  hostname: string;
+  method: 'pxe' | 'iso';
+  simulateFailure?: boolean;
+  expectedIp?: string;
+}
+export interface InstallationParameters {
+  serverId: string;
+  serverName: string;
+  serial: string;
+  hostname: string;
+  method: 'pxe' | 'iso';
+  image: ImageArtifact;
+  template: InstallTemplate;
+  address: { ip: string; gateway: string; cidr: string } | null;
+}
+export interface InstallationPreview {
+  parameters: InstallationParameters;
+  plan: string;
+}
+export interface Preflight extends InstallationPreview {
+  checkedAt: string;
+  passed: boolean;
+  checks: {
+    key: string;
+    label: string;
+    status: 'pass' | 'fail' | 'warning';
+    message: string;
+  }[];
+}
+export interface InstallationStage {
+  key: string;
+  label: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped';
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+export interface InstallationLog {
+  at: string;
+  stage: string;
+  level: 'info' | 'error';
+  message: string;
+}
 export interface Installation {
   id: string;
   serverId: string;
-  image: 'ubuntu-24.04' | 'rocky-9';
+  image: string;
   method: 'pxe' | 'iso';
   status: TaskStatus;
   progress: number;
   logs: string[];
   simulateFailure: boolean;
+  parameters: InstallationParameters;
+  stages: InstallationStage[];
+  events: InstallationLog[];
+  failureReason: string | null;
+  retryOf: string | null;
   createdAt: string;
 }
 export interface AuditEvent {
