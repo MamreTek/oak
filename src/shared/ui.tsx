@@ -218,8 +218,10 @@ export function FormModal<T extends object>({
 export function useConfirmedAction() {
   const { modal, message } = App.useApp();
   const { refresh } = useContext(RefreshContext);
-  return (title: string, target: string, action: () => Promise<unknown>) =>
-    modal.confirm({
+  // The hook's await mode keeps a rejected onOk open without rethrowing an
+  // already displayed business error as an unhandled browser rejection.
+  return async (title: string, target: string, action: () => Promise<unknown>) =>
+    await modal.confirm({
       title,
       content: (
         <Space orientation="vertical">

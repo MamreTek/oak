@@ -29,6 +29,7 @@ import type {
   RackResource,
   LocationKind,
 } from './contracts';
+import { imageFamilies } from './contracts';
 import { updateInstallationProgress } from './installation-progress';
 import { checkScript, demoScripts, ipv4Number, ipv4Text, subnetRange } from './configuration-rules';
 
@@ -147,6 +148,17 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
               status: 'draft',
               createdAt: '2026-11-01T08:00:00.000Z',
             },
+            ...(['anolis', 'debian'] as const).map((family) => ({
+              id: `${family}-demo`,
+              name: `${family === 'anolis' ? 'Anolis OS' : 'Debian'} 演示介质（未验证）`,
+              family,
+              version: 'demo-unverified',
+              architecture: 'x86_64' as const,
+              sourceLabel: '合成元数据；未确认 OS 版本、真实文件或启动兼容性',
+              checksum: (family === 'anolis' ? 'd' : 'e').repeat(64),
+              status: 'ready' as const,
+              createdAt: '2026-11-01T08:00:00.000Z',
+            })),
           ];
     templates =
       next === 'empty'
@@ -1061,7 +1073,7 @@ export function createMockService(options: { latency?: number; taskDuration?: nu
         const image: ImageInput = {
           name: required(body.name, 'name'),
           version: required(body.version, 'version', 32),
-          family: choice(body.family, 'family', ['ubuntu', 'rocky']),
+          family: choice(body.family, 'family', [...imageFamilies]),
           architecture: choice(body.architecture, 'architecture', ['x86_64']),
           sourceLabel: required(body.sourceLabel, 'sourceLabel', 128),
           checksum: required(body.checksum, 'checksum', 64).toLowerCase(),

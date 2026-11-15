@@ -15,6 +15,7 @@ import {
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useCallback, useState } from 'react';
 import { api } from '../../shared/api/client';
+import { imageFamilies, imageFamilyLabels } from '../../shared/api/contracts';
 import type {
   ImageArtifact,
   ImageInput,
@@ -49,7 +50,7 @@ export function Artifacts() {
         type="info"
         showIcon
         title="仅演示镜像与模板配置"
-        description="不上传或下载镜像，不执行模板。SHA-256 为声明值，未校验真实文件；“就绪”仅表示演示记录可选。记录创建后保持不变，变更配置请创建新版本。"
+        description="不上传或下载镜像，不执行模板。SHA-256 为声明值，未校验真实文件；“就绪”仅表示演示记录可选。所有 OS 版本、硬件和启动兼容性均未验证。记录创建后保持不变，变更配置请创建新版本。"
       />
       <Card>
         <Input.Search
@@ -117,7 +118,7 @@ export function Artifacts() {
                           {
                             title: '系统系列',
                             dataIndex: 'family',
-                            render: (family) => (family === 'ubuntu' ? 'Ubuntu' : 'Rocky Linux'),
+                            render: (family: ImageArtifact['family']) => imageFamilyLabels[family],
                           },
                           { title: '介质说明', dataIndex: 'sourceLabel' },
                           {
@@ -251,10 +252,10 @@ export function Artifacts() {
           <div className="form-row">
             <Form.Item name="family" label="系统系列" rules={[{ required: true }]}>
               <Select
-                options={[
-                  { value: 'ubuntu', label: 'Ubuntu' },
-                  { value: 'rocky', label: 'Rocky Linux' },
-                ]}
+                options={imageFamilies.map((family) => ({
+                  value: family,
+                  label: imageFamilyLabels[family],
+                }))}
               />
             </Form.Item>
             <Form.Item name="architecture" label="介质架构" rules={[{ required: true }]}>
@@ -387,6 +388,7 @@ export function Artifacts() {
               'checksum' in detail
                 ? [
                     { key: 'name', label: '名称', children: detail.name },
+                    { key: 'family', label: '系统系列', children: imageFamilyLabels[detail.family] },
                     { key: 'version', label: '版本', children: detail.version },
                     { key: 'architecture', label: '架构', children: detail.architecture },
                     { key: 'source', label: '介质说明', children: detail.sourceLabel },

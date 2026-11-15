@@ -10,7 +10,7 @@ describe('Resource management screens', () => {
     configure({ asyncUtilTimeout: 5000 });
     mockService.reset();
   });
-  it('uses four independent menus to create, edit, inspect and delete resources', async () => {
+  it('creates four resources through independent menus and edits, inspects and deletes a rack', async () => {
     window.history.replaceState({}, '', '/facilities');
     const user = userEvent.setup();
     render(<App />);
@@ -72,6 +72,49 @@ describe('Resource management screens', () => {
       expect(screen.queryByRole('row', { name: /Demo Rack Edited/ })).not.toBeInTheDocument(),
     );
   }, 90000);
+  it.each([
+    ['idc', 'IDC', '/idcs'],
+    ['building', '楼栋', '/buildings'],
+    ['room', '机房', '/rooms'],
+  ] as const)('edits, inspects and deletes an unreferenced %s independently', async (kind, label, path) => {
+    const name = `Demo ${kind}`;
+    if (kind === 'idc') await api.createResource(kind, { name, city: 'Demo city' });
+    if (kind === 'building') await api.createResource(kind, { name, idcId: 'dc-east' });
+    if (kind === 'room') await api.createResource(kind, { name, buildingId: 'building-dc-east' });
+    window.history.replaceState({}, '', path);
+    const user = userEvent.setup();
+    render(<App />);
+    const original = await screen.findByRole('row', { name: new RegExp(name) });
+    await user.click(within(original).getByRole('button', { name: '编辑' }));
+    const form = await screen.findByRole('dialog');
+    const field = within(form).getByLabelText(`${label}名称`);
+    await user.clear(field);
+    await user.click(field);
+    await user.paste(`${name} edited`);
+    if (kind === 'idc') {
+      const city = within(form).getByLabelText('城市（虚构数据）');
+      await user.clear(city);
+      await user.click(city);
+      await user.paste('Updated demo city');
+    } else {
+      expect(within(form).getByText(/不可修改/)).toBeInTheDocument();
+      expect(within(form).queryByRole('combobox')).not.toBeInTheDocument();
+    }
+    await user.click(within(form).getByRole('button', { name: '确 认' }));
+    await waitFor(() => expect(form).not.toBeInTheDocument());
+    const edited = await screen.findByRole('row', { name: new RegExp(`${name} edited`) });
+    await user.click(within(edited).getByRole('button', { name: '详情' }));
+    const detail = await screen.findByRole('dialog');
+    expect(within(detail).getAllByText(`${name} edited`).length).toBeGreaterThan(0);
+    if (kind === 'idc') expect(within(detail).getByText('Updated demo city')).toBeInTheDocument();
+    await user.click(within(detail).getByRole('button', { name: '关闭' }));
+    await waitFor(() => expect(detail).not.toBeInTheDocument());
+    await user.click(within(edited).getByRole('button', { name: '删除' }));
+    const confirmation = await screen.findByRole('dialog');
+    await user.click(within(confirmation).getByRole('button', { name: '确认模拟操作' }));
+    await waitFor(() => expect(screen.queryByRole('row', { name: new RegExp(`${name} edited`) })).not.toBeInTheDocument());
+    expect((await api.resources(kind, { q: name })).total).toBe(0);
+  }, 30000);
   it('explains missing parents and recovers a resource page from service failure', async () => {
     mockService.reset('empty');
     window.history.replaceState({}, '', '/buildings');

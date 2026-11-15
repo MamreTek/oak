@@ -1,4 +1,4 @@
-# Oak API 契约 v1.3（原型草案）
+# Oak API 契约 v1.3.1（原型草案）
 
 本契约用于后续真实后端适配，**不代表接口已经部署**。当前应用通过 `createApi(transport)` 调用 `Request → Response` 的内存 Mock。前端模型见 `src/shared/api/contracts.ts`，处理器见 `src/shared/api/mock.ts`。无外部网络请求或真实设备操作。
 
@@ -56,7 +56,7 @@
 | Address | `id,poolId,ip:string`；`serverId:string|null`；分配 ID 使用 addressId，回收后资源地址 ID 不变 |
 | Candidate | `id,serial,model,name:string`；`importedServerId:string|null` |
 | Discovery | `id,poolId,createdAt:string`；`method:in-band/out-of-band`；`status:TaskStatus`；`progress:number`（0–100）；`candidates:Candidate[]` |
-| ImageInput | `name:string` 1–64；`version:string` 1–32；`family:ubuntu/rocky`；`architecture:x86_64`；`sourceLabel:string` 1–128（介质说明，不进行网络访问）；`checksum:string` 64 位十六进制声明 SHA-256，存为小写；`status:draft/ready`（演示状态） |
+| ImageInput | `name:string` 1–64；`version:string` 1–32；`family:ubuntu/anolis/debian/rocky`；`architecture:x86_64`；`sourceLabel:string` 1–128（介质说明，不进行网络访问）；`checksum:string` 64 位十六进制声明 SHA-256，存为小写；`status:draft/ready`（演示状态） |
 | ImageArtifact | ImageInput 加 `id,createdAt:string`；种子 checksum 为合成占位，不代表可下载介质或真实校验结果 |
 | TemplateInput | `name:string` 1–64；`version:string` 1–32；`imageId:string`；`bootMode:uefi/bios`；`rootDisk:sda/nvme0n1`；`partitionLayout:lvm/single`；`timezone:UTC/Asia/Shanghai`；名称与版本去空白后忽略大小写判重 |
 | InstallTemplate | TemplateInput 加 `id,createdAt:string`；模板只表达产品配置，未渲染成可执行 Kickstart/Autoinstall 文件 |
@@ -70,6 +70,8 @@
 | TaskStatus | `pending/running/succeeded/failed`；当前 Mock 创建时直接为 running，pending 为契约保留值 |
 | AuditEvent | `id,action,target,actor,createdAt,requestId:string`；`result:success/failure`；actor 恒为演示操作员，无身份保证 |
 | Dashboard | `total,available,installing,warning,addressesUsed,addressesTotal:number`；`installations:Installation[]`；`alerts:{serverId,name,message:string}[]` |
+
+OS 系列使用同一组定义驱动表单选项、列表/详情名称及 Mock 输入校验；未知系列返回 400 且不插入记录。Ubuntu、Anolis OS、Debian 和 Rocky 的记录均只表示可选择的合成元数据，不代表支持相应真实版本或硬件。新增 Anolis/Debian 种子使用 `demo-unverified` 版本，不预设实际兼容版本；模板引用、预览、预检和模拟重试保留所选镜像快照。所有 OS 的真实文件、checksum、PXE/ISO 启动和安装兼容性仍未验证。
 
 创建服务器时：资产编号与序列号全局唯一（忽略大小写）；机架必须存在；设备不能越过容量，不能与未退役设备的 U 位重叠。创建默认 ready、off、os=null。发现导入设备默认 2U/128GB，名称、型号和序列号来自该候选，并使用相同服务器校验。
 

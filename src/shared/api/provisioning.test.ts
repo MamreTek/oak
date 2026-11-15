@@ -39,6 +39,8 @@ describe('Provisioning metadata, preflight and retry contracts', () => {
   });
   afterEach(() => vi.useRealTimers());
   it('creates versioned metadata, validates references and rejects partial/conflicting records', async () => {
+    const imageCount = (await api.images()).total;
+    const templateCount = (await api.templates()).total;
     const created = await api.createImage(image);
     await expect(
       api.createImage({ ...image, name: image.name.toUpperCase() }),
@@ -46,7 +48,7 @@ describe('Provisioning metadata, preflight and retry contracts', () => {
     await expect(
       api.createImage({ ...image, version: '2', checksum: 'bad' }),
     ).rejects.toMatchObject({ status: 400 });
-    expect((await api.images()).total).toBe(4);
+    expect((await api.images()).total).toBe(imageCount + 1);
     const tpl = await api.createTemplate({ ...template, imageId: created.id });
     await expect(api.createTemplate({ ...template, imageId: created.id })).rejects.toMatchObject({
       details: { error: { code: 'TEMPLATE_CONFLICT' } },
@@ -54,7 +56,7 @@ describe('Provisioning metadata, preflight and retry contracts', () => {
     await expect(
       api.createTemplate({ ...template, name: 'Missing', imageId: 'missing' }),
     ).rejects.toMatchObject({ status: 404 });
-    expect((await api.templates()).total).toBe(4);
+    expect((await api.templates()).total).toBe(templateCount + 1);
     const request = { ...input, imageId: created.id, templateId: tpl.id };
     const plan = await api.preview(request);
     expect(plan.parameters).toMatchObject({
@@ -167,17 +169,53 @@ describe('Provisioning metadata, preflight and retry contracts', () => {
     expect((await api.server('srv-1')).status).toBe('maintenance');
   });
   it('blocks duplicate in-flight tasks and preserves metadata through service failure', async () => {
+    const seedImages = (await api.images()).items;
     await api.install(input);
     await expect(api.install(input)).rejects.toMatchObject({ status: 409 });
     service.setScenario('error');
     await expect(api.createImage(image)).rejects.toMatchObject({ status: 500 });
     service.setScenario('normal');
-    expect((await api.images()).total).toBe(3);
+    expect((await api.images()).items).toEqual(seedImages);
     service.setScenario('empty');
     expect((await api.images()).total).toBe(0);
     expect((await api.templates()).total).toBe(0);
     service.reset();
-    expect((await api.images()).total).toBe(3);
+    expect((await api.images()).items).toEqual(seedImages);
     expect((await api.installations()).total).toBe(0);
+  });
+  it.each(['ubuntu', 'anolis', 'debian'] as const)(
+    'preserves %s metadata through creation, template binding, preflight and failed retry',
+    async (family) => {
+      const seeded = (await api.images()).items.find((entry) => entry.family === family)!;
+      expect(seeded).toBeDefined();
+      const created = await api.createImage({ ...image, family, name: `Demo ${family}` });
+      const bound = await api.createTemplate({ ...template, imageId: created.id });
+      const request = { ...input, imageId: created.id, templateId: bound.id };
+      const preview = await api.preview(request);
+      expect(preview.parameters.image).toMatchObject({ id: created.id, family });
+      expect(JSON.parse(preview.plan)).toMatchObject({ executable: false, prototype: true });
+      expect((await api.preflight(request)).passed).toBe(true);
+      await expect(api.install({ ...request, templateId: 'tpl-rocky-9' })).rejects.toMatchObject({
+        details: { error: { code: 'TEMPLATE_MISMATCH' } },
+      });
+      const first = await api.install({ ...request, simulateFailure: true });
+      vi.advanceTimersByTime(1001);
+      const failed = await api.installation(first.id);
+      expect(failed.status).toBe('failed');
+      const retry = await api.retry(first.id);
+      expect(retry.parameters.image).toEqual(created);
+      expect(retry.parameters.template).toEqual(bound);
+      vi.advanceTimersByTime(1001);
+      expect((await api.installation(retry.id)).status).toBe('succeeded');
+      expect(await api.installation(first.id)).toEqual(failed);
+    },
+  );
+  it('rejects undeclared OS families without inserting metadata', async () => {
+    const before = await api.images();
+    const response = await service.transport(new Request('http://oak.mock/api/v1/images', {
+      method: 'POST', body: JSON.stringify({ ...image, family: 'unsupported-demo' }),
+    }));
+    expect(response.status).toBe(400);
+    expect(await api.images()).toEqual(before);
   });
 });

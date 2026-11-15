@@ -142,9 +142,17 @@ export interface Discovery {
   credentialProfileId: string;
   credential: CredentialProfile;
 }
+export const imageFamilies = ['ubuntu', 'anolis', 'debian', 'rocky'] as const;
+export type ImageFamily = (typeof imageFamilies)[number];
+export const imageFamilyLabels: Record<ImageFamily, string> = {
+  ubuntu: 'Ubuntu',
+  anolis: 'Anolis OS',
+  debian: 'Debian',
+  rocky: 'Rocky Linux',
+};
 export interface ImageInput {
   name: string;
-  family: 'ubuntu' | 'rocky';
+  family: ImageFamily;
   version: string;
   architecture: 'x86_64';
   sourceLabel: string;
